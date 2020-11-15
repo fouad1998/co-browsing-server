@@ -209,9 +209,8 @@ export class CoBrowsing {
             const eventsLookingForward = ['onchange', 'oninput', 'onkeypress', 'onkeydown', 'onkeyup']
             const emploriumHandler = (event: any, eventType: string) => {
                 if (!this.allowToSendEvent) return void 0
-                this.allowToSendEvent = false;
-                setTimeout(() => this.allowToSendEvent = true, 1000/15);
-                console.log('new event')
+                setTimeout(() => this.allowToSendEvent = true, 1000/24);
+                console.log('new event', event)
                 switch(eventType) {
                     case "onchange": {
                         const target = event.target;
@@ -326,6 +325,7 @@ export class CoBrowsing {
                     for (const eventType of eventsLookingForward) {
                         console.log(eventType.substr(2))
                         node.addEventListener(eventType.substr(2), (event: any) => {
+                            event.stopPropagation()
                             emploriumHandler(event, eventType)
                         })
                     }
@@ -473,6 +473,7 @@ export class CoBrowsing {
         switch(element.nodeType) {
             case document.ELEMENT_NODE:
                 element = element as HTMLElement
+                if (element.tagName === "SCRIPT") return void 0
                 //@ts-ignore
                 element.__emploriumId = this._id + 1;
                 this.map.set(this._id+1, element)
