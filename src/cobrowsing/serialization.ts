@@ -7,6 +7,13 @@ enum EVENTS_TYPE {
     ATTRIBUTE_CHANGE,
     SNAPSHOT,
 }
+enum INPUT_EVENTS_TYPE {
+    INPUT = 0,
+    CHANGE,
+    KEYPRESS,
+    KEYPRESSDOWN,
+    KEYPRESSUP,
+}
 interface CoBrowsingInterface {
     root: HTMLElement;
     coBrowsingExec: boolean // If the co-browser is used to execute remote event
@@ -35,6 +42,13 @@ interface mouseClick {
 interface inputEvent {
     id: number;
     content: string;
+    eventType: number;
+    ctl?: boolean;
+    alt?: boolean;
+    shift?: boolean;
+    code?: string;
+    keyCode?: string; 
+    which?: number;
 }
 // DOM Event, kind of element change all his chidlren or add new children to the list
 interface DOMEvent {
@@ -62,12 +76,13 @@ const map = new Map<number, HTMLElement>()
 
 export class CoBrowsing {
     _id = -1;
-    map: Map<number, HTMLElement>
+    map: Map<number, HTMLElement | Document>
     iframe: HTMLIFrameElement | null = null
     wrapper: HTMLDivElement | null = null
     root: HTMLElement
     config: Partial<CoBrowsingInterface> = {}
     socket: WebSocket
+    allowToSendEvent: boolean = true
     
     constructor(props: CoBrowsingInterface){
         if (!props.socket) {
@@ -90,7 +105,7 @@ export class CoBrowsing {
         this.setConfig = this.setConfig.bind(this)
         this.buildDOM = this.buildDOM.bind(this)
         this.executeEvent = this.executeEvent.bind(this)
-
+        this.startFieldChangeEventListener = this.startFieldChangeEventListener.bind(this)
     }
 
     setConfig(config: CoBrowsingInterface){
@@ -113,6 +128,8 @@ export class CoBrowsing {
             type: EVENTS_TYPE.SNAPSHOT,
         }
         this.socket.send(JSON.stringify(eventSend))
+        this.startMutationObserver(document)
+        this.startFieldChangeEventListener(document)
     }
 
     private mutationObserverHandler(events: Array<any>) {
@@ -176,9 +193,9 @@ export class CoBrowsing {
         });
     }
 
-    private startMutationObserver() {
+    private startMutationObserver(document: Document) {
         const mutation = new MutationObserver(this.mutationObserverHandler)
-        mutation.observe(this.iframe?.contentDocument?.body as HTMLElement, {
+        mutation.observe(document.body as HTMLElement, {
             attributeOldValue: true,
             attributes: true,
             subtree: true,
@@ -186,10 +203,142 @@ export class CoBrowsing {
         })
     }
 
+    private startFieldChangeEventListener(document: Document) {
+        if (document && 'getElementsByTagName' in document) {
+            const fields = ['input', 'select', 'textarea']
+            const eventsLookingForward = ['onchange', 'oninput', 'onkeypress', 'onkeydown', 'onkeyup']
+            const emploriumHandler = (event: any, eventType: string) => {
+                if (!this.allowToSendEvent) return void 0
+                this.allowToSendEvent = false;
+                setTimeout(() => this.allowToSendEvent = true, 1000/15);
+                console.log('new event')
+                switch(eventType) {
+                    case "onchange": {
+                        const target = event.target;
+                        console.log(event, target)
+                        const value = target.value;
+                        const inputEvent: inputEvent = {
+                            id: target.__emploriumId,
+                            content: value,
+                            eventType: INPUT_EVENTS_TYPE.CHANGE,
+                        }
+                        const eventSend: HTMLEvent = {
+                            type: EVENTS_TYPE.INPUT,
+                            data: inputEvent
+                        }
+                        this.socket.send(JSON.stringify(eventSend))
+                        break
+                    }
+                    
+                    case "oninput": {
+                        const target = event.target;
+                        const value = target.value;
+                        const inputEvent: inputEvent = {
+                            id: target.__emploriumId,
+                            content: value,
+                            eventType: INPUT_EVENTS_TYPE.INPUT,
+                        }
+                        const eventSend: HTMLEvent = {
+                            type: EVENTS_TYPE.INPUT,
+                            data: inputEvent
+                        }
+                        this.socket.send(JSON.stringify(eventSend))
+                        break
+                    }
+                        
+                    case "onkeypress": {
+                        const target = event.target;
+                        const value = target.value;
+                        const { ctrlKey, code, altKey, keyCode, which, shiftKey } = event;
+                        const inputEvent: inputEvent = {
+                            id: target.__emploriumId,
+                            content: value,
+                            eventType: INPUT_EVENTS_TYPE.KEYPRESS,
+                            alt: altKey,
+                            code: code,
+                            ctl: ctrlKey,
+                            keyCode,
+                            which: which,
+                            shift: shiftKey
+                        }
+                        const eventSend: HTMLEvent = {
+                            type: EVENTS_TYPE.INPUT,
+                            data: inputEvent
+                        }
+                        this.socket.send(JSON.stringify(eventSend))
+                        break
+                    }
+                        
+                    case "onkeydown": {
+                        const target = event.target;
+                        const value = target.value;
+                        const { ctrlKey, code, altKey, keyCode, which, shiftKey } = event;
+                        const inputEvent: inputEvent = {
+                            id: target.__emploriumId,
+                            content: value,
+                            eventType: INPUT_EVENTS_TYPE.KEYPRESSDOWN,
+                            alt: altKey,
+                            code: code,
+                            ctl: ctrlKey,
+                            keyCode,
+                            which: which,
+                            shift: shiftKey
+                        }
+                        const eventSend: HTMLEvent = {
+                            type: EVENTS_TYPE.INPUT,
+                            data: inputEvent
+                        }
+                        this.socket.send(JSON.stringify(eventSend))
+                        break
+                    }
+                        
+                    case "onkeyup": {
+                        const target = event.target;
+                        const value = target.value;
+                        const { ctrlKey, code, altKey, keyCode, which, shiftKey } = event;
+                        const inputEvent: inputEvent = {
+                            id: target.__emploriumId,
+                            content: value,
+                            eventType: INPUT_EVENTS_TYPE.KEYPRESSUP,
+                            alt: altKey,
+                            code: code,
+                            ctl: ctrlKey,
+                            keyCode,
+                            which: which,
+                            shift: shiftKey
+                        }
+                        const eventSend: HTMLEvent = {
+                            type: EVENTS_TYPE.INPUT,
+                            data: inputEvent
+                        }
+                        this.socket.send(JSON.stringify(eventSend))
+                        break
+                    }
+                }
+            }
+
+            for (const field of fields) {
+                const nodes = document.getElementsByTagName(field);
+                console.log(nodes, field)
+                Array.from(nodes).forEach((node) => {
+                    console.log(node, field)
+                    node = node as HTMLInputElement
+                    for (const eventType of eventsLookingForward) {
+                        console.log(eventType.substr(2))
+                        node.addEventListener(eventType.substr(2), (event: any) => {
+                            emploriumHandler(event, eventType)
+                        })
+                    }
+                })
+            }
+        }
+    }
+
     private buildDOM(DOMString: string  | HTMLElementSerialization):void {
         const DOM = typeof DOMString === "string" ? JSON.parse(DOMString) as HTMLElementSerialization : DOMString
         this.rebuildDOM(DOM, this.iframe?.contentDocument as Document, true)
-        this.startMutationObserver()
+        this.startMutationObserver(this.iframe?.contentDocument as Document)
+        this.startFieldChangeEventListener(this.iframe?.contentDocument as Document)
     }
 
     private executeEvent = (event: MessageEvent): void =>  {
@@ -197,6 +346,7 @@ export class CoBrowsing {
         try {
             const eventString  =  event.data
             const parsedEvent = JSON.parse(eventString) as HTMLEvent
+            console.log("Trying to Execute event......")
             // the object in this case is not used to execute commande not, because we are in the remote pair 
         if (!this.config.coBrowsingExec && parsedEvent.type !== EVENTS_TYPE.SNAPSHOT) return undefined
             console.log("Execute event......")
@@ -204,12 +354,40 @@ export class CoBrowsing {
             switch (parsedEvent.type){
                 case EVENTS_TYPE.INPUT: {
                     const eventContent = parsedEvent.data  as inputEvent
-                    const node = map.get(eventContent.id) as HTMLInputElement
-                    node.value = eventContent.content
+                    const node = this.map.get(eventContent.id) as HTMLInputElement
+                    console.log("INPUT EVENT")
+                    switch(eventContent.eventType) {
+                       case INPUT_EVENTS_TYPE.CHANGE: {
+                        const { content } = eventContent
+                        debugger
+                        node.value = content
+                        if (node?.onchange) {
+                            //@ts-ignore
+                            node.onchange({isTrusted: true, target: node, stopPropagation: () => {}})
+                        }
+                        break;
+                       }
+
+                       case INPUT_EVENTS_TYPE.INPUT: {
+                        break
+                       }
+
+                       case INPUT_EVENTS_TYPE.KEYPRESS: {
+                        break
+                       }
+
+                       case INPUT_EVENTS_TYPE.KEYPRESSDOWN: {
+                        break
+                       }
+
+                       case INPUT_EVENTS_TYPE.KEYPRESSUP: {
+
+                       }
+                   }
                     break
                 }
     
-                case EVENTS_TYPE.ATTRIBUTE_CHANGE:{
+                case EVENTS_TYPE.ATTRIBUTE_CHANGE: {
                     const eventContent = parsedEvent.data as AttributeEvent
                     const node = map.get(eventContent.id)
                     //@ts-ignore
@@ -262,7 +440,6 @@ export class CoBrowsing {
                     const eventContent = parsedEvent.data as SnapShotEvent
                     const DOM = eventContent.content
                     //TODO Change place after
-                    debugger;
                     console.log("Building", DOM)
                     this.setup()
                     this.buildDOM(DOM)
@@ -298,6 +475,7 @@ export class CoBrowsing {
                 element = element as HTMLElement
                 //@ts-ignore
                 element.__emploriumId = this._id + 1;
+                this.map.set(this._id+1, element)
                 return {
                     id: ++this._id,
                     tag: element.tagName.toLocaleLowerCase(),
@@ -325,30 +503,37 @@ export class CoBrowsing {
                 }
                 //@ts-ignore
                 element.__emploriumId = this._id + 1;
+                this.map.set(this._id+1, element)
                 return {
                     id: ++this._id,
                     type: document.TEXT_NODE,
                     content: element.textContent as string,
                 }
-            case document.DOCUMENT_NODE:
+            case document.DOCUMENT_NODE: {
                 element = element as Document
                 //@ts-ignore
                 element.__emploriumId = this._id + 1;
+                this.map.set(this._id+1, element)
                 return {
                     id: ++this._id,
                     type: document.DOCUMENT_NODE,
                     children: [element.head, element.body].map(element => this.serializeDOMElement(element)).filter(serialize => serialize !== void 0) as HTMLElementSerialization[]
                 }
+            }
+                
         }
         return undefined;
     }
 
     private buildElementNode (element: HTMLElementSerialization, virtualDocument?: Document, isIframe?: boolean): HTMLElement | Document | Text | undefined {
+        if(element.tag === "input") console.log(element.id)
         switch(element.type) {
             case document.DOCUMENT_NODE: {
                 const doc = virtualDocument!.implementation.createDocument(null, null, null)
                 const children = element.children?.map(child =>this.buildElementNode(child, isIframe ? virtualDocument : doc)) || []
                 const HTMLNode = document.createElement("html")
+                //@ts-ignore
+                doc.__emploriumId = element.id;
                 children.map(child => HTMLNode.appendChild(child as HTMLElement))
                 if (isIframe) {
                     virtualDocument?.getElementsByTagName('html')[0].remove()
@@ -373,6 +558,8 @@ export class CoBrowsing {
             }
             case document.TEXT_NODE: {
                 const textNode = virtualDocument?.createTextNode(element.content as string) as Text
+                ///@ts-ignore
+                textNode.__emploriumId = element.id;
                 return textNode
              }
     
