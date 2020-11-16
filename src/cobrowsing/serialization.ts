@@ -1,11 +1,11 @@
 enum EVENTS_TYPE {
-    CLICK = 0,
     INPUT,
     MOUSE,
     DOM_CHANGE,
     REMOVED_ELEMENT_FROM_DOM,
     ATTRIBUTE_CHANGE,
     SNAPSHOT,
+    WINDOW
 }
 enum INPUT_EVENTS_TYPE {
     INPUT = 0,
@@ -14,12 +14,19 @@ enum INPUT_EVENTS_TYPE {
     KEYDOWN,
     KEYUP,
 }
+enum MOUSE_EVENTS_TYPE {
+    CLICK = 0,
+    HOVER,
+    POSITION
+}
+enum WINDOW_EVENTS_TYPE {
+    RESIZE = 0,
+}
 interface CoBrowsingInterface {
     root: HTMLElement;
     remotePeer: boolean // If the co-browser is used to execute remote event
     socket: WebSocket// the websocket connection, it can be other thing if we want like (RTC, XHR...)
 }
-
 interface HTMLElementSerialization {
     id: number;
     type: number;
@@ -34,9 +41,25 @@ interface HTMLElementRemovedEvent {
     id: number
 }
 // mouse click event
-interface mouseClick {
-    x: number;
-    y: number;
+interface mouseCoordonate {
+    clientX: number,
+    clientY: number,
+    ctrl?: boolean,
+    alt?: boolean,
+    shift?: boolean,
+    movementX?: number,
+    movementY?: number,
+    offsetX?: number,
+    pageY?: number,
+    pageX?: number,
+    screenX?: number,
+    screenY?: number,
+    x?: number,
+    y?: number
+}
+interface Resize {
+    width: number;
+    height: number;
 }
 // input change the value
 interface inputEvent {
@@ -65,10 +88,21 @@ interface SnapShotEvent {
     href: string
     content: HTMLElementSerialization
 }
+// Mouse Events 
+interface MouseEvent {
+    id: number;
+    type: number;
+    content: mouseCoordonate;
+}
+// Window Event
+interface WindowEvent {
+    type: number
+    content: Resize
+}
 // The whole objec who contains all kind of event that can be cought
 interface HTMLEvent {
     type: number;
-    data: mouseClick | inputEvent | DOMEvent | AttributeEvent | SnapShotEvent | HTMLElementRemovedEvent | HTMLElementSerialization
+    data: inputEvent | DOMEvent | AttributeEvent | SnapShotEvent | HTMLElementRemovedEvent | HTMLElementSerialization | WindowEvent | MouseEvent
 }
 
 
@@ -78,6 +112,8 @@ export class CoBrowsing {
     _id = -1;
     map: Map<number, HTMLElement | Document>
     iframe: HTMLIFrameElement | null = null
+    mouse: HTMLDivElement | null = null
+    iframeWrapper: HTMLDivElement | null = null
     wrapper: HTMLDivElement | null = null
     root: HTMLElement
     config: Partial<CoBrowsingInterface> = {}
@@ -116,22 +152,111 @@ export class CoBrowsing {
      * Transform the current document to a string representation, in order to rebuild it after
      */
     snapshot(): HTMLElementSerialization | undefined {
-        console.log("Snapshot....!!!!!!")
-        // The object here is used as the controller, not the receiver, so we don't need to get snapshot of it
+        // The remote (Agent in our case) peer doesn't need to create snapshot of his webpage
         if (this.config.remotePeer) return undefined
-        console.log("GOing!!!!!!!!!!!!!!!")
+        // Create serialization of the Document
         const DOMVirual = this.serializeDOMElement(document)
+        // Create the event content
         const event: SnapShotEvent = {
             href: window.location.href,
             content: DOMVirual as HTMLElementSerialization
         }
+        // The event to send who contains the type of the event and event data (event content)
         const eventSend: HTMLEvent = {
             data: event,
             type: EVENTS_TYPE.SNAPSHOT,
         }
+        // Send the content through the socket
         this.socket.send(JSON.stringify(eventSend))
+        // Listen  to the DOM changement
         this.startMutationObserver(document)
+        // Listen to some event on each node
         this.startFieldChangeEventListener(document)
+        // Listen to window event
+        this.listenToWindowResize()
+        // Make virtual cursor 
+        const mouseCursor = document.createElement("img")
+        this.mouse = document.createElement("div")
+        mouseCursor.src = "https://tl.vhv.rs/dpng/s/407-4077994_mouse-pointer-png-png-download-mac-mouse-pointer.png"
+        mouseCursor.style.width = "100%"
+        mouseCursor.style.height = "100%"
+        this.mouse.style.position = "fixed"
+        this.mouse.style.left = "0px"
+        this.mouse.style.top = "0px"
+        this.mouse.style.width = "20px"
+        this.mouse.style.height = "20px"
+        this.mouse.style.zIndex = "1000000"
+        this.mouse.append(mouseCursor)
+        document.body.append(this.mouse)
+    }
+
+    /**
+     * Listen to window size and throw the event using socket to the other side
+     * 
+     * NOTE: THE CLIENT SIDE WHO FOLLOW, NOT THE AGENCY SIDE
+     */
+    private listenToWindowResize() {
+        const resizeHandler = () => {
+            const { innerWidth, innerHeight } = window
+            // Window event content
+            const event: WindowEvent = {
+                type: WINDOW_EVENTS_TYPE.RESIZE,
+                content: {
+                    height: innerHeight,
+                    width: innerWidth,
+                }
+            }
+            // Generate an event to send
+            const eventToSend: HTMLEvent = {
+                type: EVENTS_TYPE.WINDOW,
+                data: event
+            }
+            // Send the event 
+            this.socket.send(JSON.stringify(eventToSend))
+        }
+        window.addEventListener("resize", resizeHandler)
+        // Send the first set of dimension
+        resizeHandler()
+    }
+
+    private listenToWindowEventRemotePeer() {
+        // Change the wrapper scale in order to keep the same forme of the dom in both sides
+        const resizeHandler = () => {
+            const { innerHeight, innerWidth } = window
+            // Get needed data from iframe
+            const width = this.iframeWrapper!.style.width.replace(/(^[0-9]+).+/, "$1")
+            const height = this.iframeWrapper!.style.height.replace(/(^[0-9]+).+/, "$1")
+            console.log({ width, height })
+            // Make the scale
+            const xScale = !width ? 1 : innerWidth / +width
+            const yScale = !height ? 1 : innerHeight / +height
+            // Set the Scale
+            this.wrapper!.style.transform = `scaleX(${xScale}) scaleY(${yScale})`
+        }
+        window.addEventListener("resize", resizeHandler)
+    }
+
+    private listenToMousePosition(document: Document) {
+        document.body.addEventListener("mouseover", (event) => {
+            console.log("Mouse Position.............")
+            // get the mouse position
+            const { clientX, clientY } = event
+            // Create the event content
+            const eventContent: MouseEvent = {
+                id: 0,
+                type: MOUSE_EVENTS_TYPE.POSITION,
+                content: {
+                    clientX,
+                    clientY,
+                }
+            }
+            // Event to send
+            const eventSend: HTMLEvent = {
+                type: EVENTS_TYPE.MOUSE,
+                data: eventContent
+            }
+            this.socket.send(JSON.stringify(eventSend))
+        })
     }
 
     private mutationObserverHandler(events: Array<any>) {
@@ -355,7 +480,7 @@ export class CoBrowsing {
             const parsedEvent = JSON.parse(eventString) as HTMLEvent
             console.log("Trying to Execute event......", this.config.remotePeer)
             // the object in this case is not used to execute commande not, because we are in the remote pair 
-            if (this.config.remotePeer && parsedEvent.type !== EVENTS_TYPE.SNAPSHOT && parsedEvent.type !== EVENTS_TYPE.DOM_CHANGE) return undefined
+            if (this.config.remotePeer && parsedEvent.type !== EVENTS_TYPE.SNAPSHOT && parsedEvent.type !== EVENTS_TYPE.DOM_CHANGE && parsedEvent.type !== EVENTS_TYPE.WINDOW) return undefined
             console.log("Execute event......")
             // type is the type of event we received to execute, if the type doesn't exist so it should not be executed
             switch (parsedEvent.type) {
@@ -453,6 +578,56 @@ export class CoBrowsing {
                     break
                 }
 
+                case EVENTS_TYPE.MOUSE: {
+                    console.log("Mouse event to execute....")
+                    const eventContent = parsedEvent.data as MouseEvent
+                    const {
+                        clientX,
+                        clientY,
+                        ctrl: ctrlKey,
+                        alt: altKey,
+                        shift: shiftKey,
+                        movementX,
+                        movementY,
+                        offsetX,
+                        pageY,
+                        pageX,
+                        screenX,
+                        screenY,
+                        x,
+                        y
+                    } = eventContent.content
+                    const node = this.map.get(eventContent.id)
+                    switch (eventContent.type) {
+                        case MOUSE_EVENTS_TYPE.CLICK: {
+                            // The click event can be used by Native API in javascript by using the 
+                            // MouseEvent Object. https://developer.mozilla.org/en-US/docs/Web/API/MouseEvent/MouseEvent
+                            const mouseEvent = new MouseEvent("click", {
+                                screenX,
+                                screenY,
+                                clientX,
+                                clientY,
+                                ctrlKey,
+                                shiftKey,
+                                altKey,
+                            })
+                            node?.dispatchEvent(mouseEvent)
+                            break
+                        }
+
+                        case MOUSE_EVENTS_TYPE.HOVER: {
+                            break
+                        }
+
+                        case MOUSE_EVENTS_TYPE.POSITION: {
+                            this.mouse!.style.left = clientX + "px";
+                            this.mouse!.style.top = clientY + "px";
+                            break
+                        }
+                    }
+                    break
+                }
+
                 case EVENTS_TYPE.ATTRIBUTE_CHANGE: {
                     const eventContent = parsedEvent.data as AttributeEvent
                     const node = map.get(eventContent.id)
@@ -502,13 +677,43 @@ export class CoBrowsing {
                     break;
                 }
 
+                case EVENTS_TYPE.WINDOW: {
+                    // subtract the event
+                    const eventContent = parsedEvent.data as WindowEvent
+                    switch (eventContent.type) {
+                        case WINDOW_EVENTS_TYPE.RESIZE: {
+                            console.log("Resize received.....")
+                            // subtract the event content
+                            const { width, height } = eventContent.content;
+                            // subtract innerHeight and innerWidth
+                            const { innerWidth, innerHeight } = window
+                            // Calculate the corresponding scale for each Axis
+                            const xScale = innerWidth / width;
+                            const yScale = innerHeight / height;
+                            // Set the width and height of corresponding iframe element
+                            this.iframeWrapper!.style.width = `${width}px`
+                            this.iframeWrapper!.style.height = `${height}px`
+                            // Set a scale on container
+                            this.wrapper!.style.transform = `scaleX(${xScale}) scaleY(${yScale})`
+                            break
+                        }
+                    }
+                    break
+                }
+
                 case EVENTS_TYPE.SNAPSHOT: {
+                    // substract the event
                     const eventContent = parsedEvent.data as SnapShotEvent
+                    // substract the DOM content
                     const DOM = eventContent.content
-                    //TODO Change place after
-                    console.log("Building", DOM)
+                    // Setup the wrapper and iframe to heberge the new received dom
                     this.setup()
+                    // Start building the DOM
                     this.buildDOM(DOM)
+                    // Listen to some events on The window  
+                    this.listenToWindowEventRemotePeer()
+                    // Listen to the mouse postion over the body component
+                    this.listenToMousePosition(this.iframe!.contentDocument as Document)
                     break;
                 }
             }
@@ -526,11 +731,43 @@ export class CoBrowsing {
     }
 
     private setup() {
+        // Remove the previous container
+        if (this.wrapper) this.wrapper.remove()
+        // Create elements
+        const mouseCursor = document.createElement("img")
         this.iframe = document.createElement("iframe")
+        this.iframeWrapper = document.createElement("div")
+        this.mouse = document.createElement("div")
         this.wrapper = document.createElement("div")
+        // Add some properties
+        mouseCursor.src = "https://tl.vhv.rs/dpng/s/407-4077994_mouse-pointer-png-png-download-mac-mouse-pointer.png"
+        mouseCursor.style.width = "100%"
+        mouseCursor.style.height = "100%"
+        this.mouse.style.position = "absolute"
+        this.mouse.style.left = "0px"
+        this.mouse.style.top = "0px"
+        this.mouse.style.width = "20px"
+        this.mouse.style.height = "20px"
+        this.mouse.style.zIndex = "1000000"
         this.iframe.classList.add("__emplorium-iframe")
         this.wrapper.classList.add("__emplorium-wrapper")
-        this.wrapper.append(this.iframe)
+        this.iframe.style.width = "100%";
+        this.iframe.style.height = "100%";
+        this.iframeWrapper.style.width = "100%";
+        this.iframeWrapper.style.height = "100%";
+        this.wrapper.style.transformOrigin = " 0 0 0";
+        this.wrapper.style.width = "100vw";
+        this.wrapper.style.height = "100vh";
+        this.wrapper.style.maxWidth = "100vw";
+        this.wrapper.style.maxHeight = "100vh";
+        this.wrapper.style.minWidth = "100vw";
+        this.wrapper.style.minHeight = "100vh";
+        this.wrapper.style.position = "relative";
+        // Append them by each other
+        this.mouse.append(mouseCursor)
+        this.iframeWrapper.append(this.iframe)
+        this.wrapper.append(this.iframeWrapper)
+        this.wrapper.append(this.mouse)
         this.root.append(this.wrapper)
     }
 
