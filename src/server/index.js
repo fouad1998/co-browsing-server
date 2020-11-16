@@ -6,7 +6,7 @@ const server = new WebSocket.Server({
 let sockets = [];
 server.on('connection', function (socket) {
   sockets.push(socket);
-
+  socket.send("Init")
   // When you receive a message, send that message to every socket.
   socket.on('message', function (msg) {
     console.log('Received new Message tyoe of ', JSON.parse(msg).type);

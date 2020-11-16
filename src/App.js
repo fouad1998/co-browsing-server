@@ -11,7 +11,7 @@ export const App = () => {
         onClick={() => {
           if (!allow) return;
           browsing = new CoBrowsing({
-            coBrowsingExec: true,
+            remotePeer: false,
             root: document.body,
             socket: socket,
           });
