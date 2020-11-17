@@ -21,6 +21,7 @@ enum MOUSE_EVENTS_TYPE {
 }
 enum WINDOW_EVENTS_TYPE {
     RESIZE = 0,
+    SCROLL,
 }
 interface CoBrowsingInterface {
     root: HTMLElement;
@@ -57,6 +58,12 @@ interface mouseCoordonate {
     x?: number,
     y?: number
 }
+//Scroll event
+interface Scroll {
+    x: number;
+    y: number;
+}
+// Resize event
 interface Resize {
     width: number;
     height: number;
@@ -97,7 +104,7 @@ interface MouseEvent {
 // Window Event
 interface WindowEvent {
     type: number
-    content: Resize
+    content: Resize | Scroll
 }
 // The whole objec who contains all kind of event that can be cought
 interface HTMLEvent {
@@ -233,7 +240,28 @@ export class CoBrowsing {
             // Set the Scale
             this.wrapper!.style.transform = `scaleX(${xScale}) scaleY(${yScale})`
         }
+
+        // Scroll event
+        const scrollHandler = () => {
+            const { scrollY, scrollX } = this.iframe!.contentWindow as Window
+            console.log("Scroll event used.... ", scrollY, scrollX)
+            if (!isNaN(scrollX) && !isNaN(scrollY)) {
+                const event: WindowEvent = {
+                    type: WINDOW_EVENTS_TYPE.SCROLL,
+                    content: {
+                        x: scrollX,
+                        y: scrollY
+                    }
+                }
+                const eventSend: HTMLEvent = {
+                    type: EVENTS_TYPE.WINDOW,
+                    data: event
+                }
+                this.socket.send(JSON.stringify(eventSend))
+            }
+        }
         window.addEventListener("resize", resizeHandler)
+        this.iframe!.contentWindow!.addEventListener("scroll", scrollHandler)
     }
 
     private listenToMousePosition(document: Document) {
@@ -684,7 +712,7 @@ export class CoBrowsing {
                         case WINDOW_EVENTS_TYPE.RESIZE: {
                             console.log("Resize received.....")
                             // subtract the event content
-                            const { width, height } = eventContent.content;
+                            const { width, height } = eventContent.content as Resize;
                             // subtract innerHeight and innerWidth
                             const { innerWidth, innerHeight } = window
                             // Calculate the corresponding scale for each Axis
@@ -695,6 +723,13 @@ export class CoBrowsing {
                             this.iframeWrapper!.style.height = `${height}px`
                             // Set a scale on container
                             this.wrapper!.style.transform = `scaleX(${xScale}) scaleY(${yScale})`
+                            break
+                        }
+
+                        case WINDOW_EVENTS_TYPE.SCROLL: {
+                            console.log("Scroll event received....")
+                            const { x, y } = eventContent.content as Scroll
+                            window.scrollTo(x, y)
                             break
                         }
                     }
