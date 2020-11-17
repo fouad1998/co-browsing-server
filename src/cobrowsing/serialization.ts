@@ -9,6 +9,7 @@ enum EVENTS_TYPE {
 }
 enum INPUT_EVENTS_TYPE {
     INPUT = 0,
+    BLUR,
     CHANGE,
     KEYPRESS,
     KEYDOWN,
@@ -16,7 +17,9 @@ enum INPUT_EVENTS_TYPE {
 }
 enum MOUSE_EVENTS_TYPE {
     CLICK = 0,
-    HOVER,
+    MOUSE_ENTER,
+    MOUSE_OUT,
+    MOUSE_OVER,
     POSITION
 }
 enum WINDOW_EVENTS_TYPE {
@@ -35,6 +38,7 @@ interface HTMLElementSerialization {
     content?: string;
     attributes?: {};
     children?: Array<HTMLElementSerialization>;
+    listenEvents: Array<string>;
 }
 // When the HTML element has lost number of children
 interface HTMLElementRemovedEvent {
@@ -116,16 +120,17 @@ interface HTMLEvent {
 const map = new Map<number, HTMLElement>()
 
 export class CoBrowsing {
-    _id = -1;
-    map: Map<number, HTMLElement | Document>
-    iframe: HTMLIFrameElement | null = null
-    mouse: HTMLDivElement | null = null
-    iframeWrapper: HTMLDivElement | null = null
-    wrapper: HTMLDivElement | null = null
-    root: HTMLElement
-    config: Partial<CoBrowsingInterface> = {}
-    socket: WebSocket
-    allowToSendEvent: boolean = true
+    private _id = -1;
+    private map: Map<number, HTMLElement | Document>
+    private iframe: HTMLIFrameElement | null = null
+    private mouse: HTMLDivElement | null = null
+    private iframeWrapper: HTMLDivElement | null = null
+    private wrapper: HTMLDivElement | null = null
+    private root: HTMLElement
+    private config: Partial<CoBrowsingInterface> = {}
+    private socket: WebSocket
+    private allowToSendEvent: boolean = true
+    private readonly eventsHandled = ['onmouseover', 'onmouseenter', 'onmouseout', 'oninput', 'onchange', 'onkeypress', 'onkeydown']
 
     constructor(props: CoBrowsingInterface) {
         if (!props.socket) {
@@ -148,7 +153,6 @@ export class CoBrowsing {
         this.setConfig = this.setConfig.bind(this)
         this.buildDOM = this.buildDOM.bind(this)
         this.executeEvent = this.executeEvent.bind(this)
-        this.startFieldChangeEventListener = this.startFieldChangeEventListener.bind(this)
     }
 
     setConfig(config: CoBrowsingInterface) {
@@ -177,8 +181,6 @@ export class CoBrowsing {
         this.socket.send(JSON.stringify(eventSend))
         // Listen  to the DOM changement
         this.startMutationObserver(document)
-        // Listen to some event on each node
-        this.startFieldChangeEventListener(document)
         // Listen to window event
         this.listenToWindowResize()
         // Make virtual cursor 
@@ -244,7 +246,6 @@ export class CoBrowsing {
         // Scroll event
         const scrollHandler = () => {
             const { scrollY, scrollX } = this.iframe!.contentWindow as Window
-            console.log("Scroll event used.... ", scrollY, scrollX)
             if (!isNaN(scrollX) && !isNaN(scrollY)) {
                 const event: WindowEvent = {
                     type: WINDOW_EVENTS_TYPE.SCROLL,
@@ -358,147 +359,9 @@ export class CoBrowsing {
         })
     }
 
-    private startFieldChangeEventListener(document: Document) {
-        if (document && 'getElementsByTagName' in document) {
-            const fields = ['input', 'select', 'textarea']
-            const eventsLookingForward = ['onchange', 'oninput', 'onkeypress', 'onkeydown', 'onkeyup']
-            const emploriumHandler = (event: any, eventType: string) => {
-                if (!this.allowToSendEvent) return void 0
-                setTimeout(() => this.allowToSendEvent = true, 1000 / 24);
-                console.log('new event ', event)
-                switch (eventType) {
-                    case "onchange": {
-                        console.log("input change event ....")
-                        const target = event.target;
-                        console.log(event, target)
-                        const value = target.value;
-                        const inputEvent: inputEvent = {
-                            id: target.__emploriumId,
-                            content: value,
-                            eventType: INPUT_EVENTS_TYPE.CHANGE,
-                        }
-                        const eventSend: HTMLEvent = {
-                            type: EVENTS_TYPE.INPUT,
-                            data: inputEvent
-                        }
-                        this.socket.send(JSON.stringify(eventSend))
-                        break
-                    }
-
-                    case "oninput": {
-                        console.log("input event ....")
-                        const target = event.target;
-                        const value = target.value;
-                        const inputEvent: inputEvent = {
-                            id: target.__emploriumId,
-                            content: value,
-                            eventType: INPUT_EVENTS_TYPE.INPUT,
-                        }
-                        const eventSend: HTMLEvent = {
-                            type: EVENTS_TYPE.INPUT,
-                            data: inputEvent
-                        }
-                        this.socket.send(JSON.stringify(eventSend))
-                        break
-                    }
-
-                    case "onkeypress": {
-                        console.log("input keypress ....")
-                        const target = event.target;
-                        const value = target.value;
-                        const { ctrlKey, code, altKey, keyCode, which, shiftKey } = event;
-                        const inputEvent: inputEvent = {
-                            id: target.__emploriumId,
-                            content: value,
-                            eventType: INPUT_EVENTS_TYPE.KEYPRESS,
-                            alt: altKey,
-                            code: code,
-                            ctl: ctrlKey,
-                            keyCode,
-                            which: which,
-                            shift: shiftKey
-                        }
-                        const eventSend: HTMLEvent = {
-                            type: EVENTS_TYPE.INPUT,
-                            data: inputEvent
-                        }
-                        this.socket.send(JSON.stringify(eventSend))
-                        break
-                    }
-
-                    case "onkeydown": {
-                        console.log("input key down event ....")
-                        const target = event.target;
-                        const value = target.value;
-                        const { ctrlKey, code, altKey, keyCode, which, shiftKey } = event;
-                        const inputEvent: inputEvent = {
-                            id: target.__emploriumId,
-                            content: value,
-                            eventType: INPUT_EVENTS_TYPE.KEYDOWN,
-                            alt: altKey,
-                            code: code,
-                            ctl: ctrlKey,
-                            keyCode,
-                            which: which,
-                            shift: shiftKey
-                        }
-                        const eventSend: HTMLEvent = {
-                            type: EVENTS_TYPE.INPUT,
-                            data: inputEvent
-                        }
-                        this.socket.send(JSON.stringify(eventSend))
-                        break
-                    }
-
-                    case "onkeyup": {
-                        console.log("input keyup event ....")
-                        const target = event.target;
-                        const value = target.value;
-                        const { ctrlKey, code, altKey, keyCode, which, shiftKey } = event;
-                        const inputEvent: inputEvent = {
-                            id: target.__emploriumId,
-                            content: value,
-                            eventType: INPUT_EVENTS_TYPE.KEYUP,
-                            alt: altKey,
-                            code: code,
-                            ctl: ctrlKey,
-                            keyCode,
-                            which: which,
-                            shift: shiftKey
-                        }
-                        const eventSend: HTMLEvent = {
-                            type: EVENTS_TYPE.INPUT,
-                            data: inputEvent
-                        }
-                        this.socket.send(JSON.stringify(eventSend))
-                        break
-                    }
-                }
-            }
-
-            for (const field of fields) {
-                const nodes = document.getElementsByTagName(field);
-                console.log(nodes, field)
-                Array.from(nodes).forEach((node) => {
-                    console.log(node, field)
-                    node = node as HTMLInputElement
-                    for (const eventType of eventsLookingForward) {
-                        console.log(eventType.substr(2))
-                        node.addEventListener(eventType.substr(2), (event: any) => {
-                            event.stopPropagation()
-                            emploriumHandler(event, eventType)
-                        })
-                    }
-                })
-            }
-        }
-    }
-
     private buildDOM(DOMString: string | HTMLElementSerialization): void {
         const DOM = typeof DOMString === "string" ? JSON.parse(DOMString) as HTMLElementSerialization : DOMString
         this.rebuildDOM(DOM, this.iframe?.contentDocument as Document, true)
-        this.startMutationObserver(this.iframe?.contentDocument as Document)
-        this.startFieldChangeEventListener(this.iframe?.contentDocument as Document)
     }
 
     private executeEvent = (event: MessageEvent): void => {
@@ -506,16 +369,13 @@ export class CoBrowsing {
         try {
             const eventString = event.data
             const parsedEvent = JSON.parse(eventString) as HTMLEvent
-            console.log("Trying to Execute event......", this.config.remotePeer)
             // the object in this case is not used to execute commande not, because we are in the remote pair 
             if (this.config.remotePeer && parsedEvent.type !== EVENTS_TYPE.SNAPSHOT && parsedEvent.type !== EVENTS_TYPE.DOM_CHANGE && parsedEvent.type !== EVENTS_TYPE.WINDOW) return undefined
-            console.log("Execute event......")
             // type is the type of event we received to execute, if the type doesn't exist so it should not be executed
             switch (parsedEvent.type) {
                 case EVENTS_TYPE.INPUT: {
                     const eventContent = parsedEvent.data as inputEvent
                     const node = this.map.get(eventContent.id) as HTMLInputElement
-                    console.log("INPUT EVENT")
                     switch (eventContent.eventType) {
                         case INPUT_EVENTS_TYPE.CHANGE: {
                             console.log("input change ....", eventContent)
@@ -615,15 +475,15 @@ export class CoBrowsing {
                         ctrl: ctrlKey,
                         alt: altKey,
                         shift: shiftKey,
-                        movementX,
-                        movementY,
-                        offsetX,
-                        pageY,
-                        pageX,
+                        // movementX,
+                        // movementY,
+                        // offsetX,
+                        // pageY,
+                        // pageX,
                         screenX,
                         screenY,
-                        x,
-                        y
+                        // x,
+                        // y
                     } = eventContent.content
                     const node = this.map.get(eventContent.id)
                     switch (eventContent.type) {
@@ -643,7 +503,7 @@ export class CoBrowsing {
                             break
                         }
 
-                        case MOUSE_EVENTS_TYPE.HOVER: {
+                        case MOUSE_EVENTS_TYPE.MOUSE_OVER: {
                             break
                         }
 
@@ -679,7 +539,7 @@ export class CoBrowsing {
                         child.remove()
                     })
 
-                    const builded = this.buildElementNode(eventContent.content as HTMLElementSerialization);
+                    const builded = this.buildElementNode(eventContent.content as HTMLElementSerialization, []);
                     builded?.childNodes.forEach(child => node?.append(child))
                     break;
                 }
@@ -745,6 +605,8 @@ export class CoBrowsing {
                     this.setup()
                     // Start building the DOM
                     this.buildDOM(DOM)
+                    // Listen to the changement in the DOM (created by css)
+                    this.startMutationObserver(this.iframe?.contentDocument as Document)
                     // Listen to some events on The window  
                     this.listenToWindowEventRemotePeer()
                     // Listen to the mouse postion over the body component
@@ -762,7 +624,7 @@ export class CoBrowsing {
             serialization = JSON.parse(serialization)
         }
 
-        return (this.buildElementNode(serialization as HTMLElementSerialization, dom, isIframe));
+        return (this.buildElementNode(serialization as HTMLElementSerialization, [], dom, isIframe));
     }
 
     private setup() {
@@ -797,7 +659,6 @@ export class CoBrowsing {
         this.wrapper.style.maxHeight = "100vh";
         this.wrapper.style.minWidth = "100vw";
         this.wrapper.style.minHeight = "100vh";
-        this.wrapper.style.position = "relative";
         // Append them by each other
         this.mouse.append(mouseCursor)
         this.iframeWrapper.append(this.iframe)
@@ -832,7 +693,9 @@ export class CoBrowsing {
                             value = `${protocol}//${hostname}${port}${value}`
                         }
                         return ({ [attribute.name]: value })
-                    }).reduce((acc, v) => ({ ...acc, ...v }), {})
+                    }).reduce((acc, v) => ({ ...acc, ...v }), {}),
+                    //@ts-ignore
+                    listenEvents: this.eventsHandled.filter(event => element[event] !== null)
                 }
             case document.TEXT_NODE:
                 element = element as HTMLElement
@@ -846,6 +709,8 @@ export class CoBrowsing {
                     id: ++this._id,
                     type: document.TEXT_NODE,
                     content: element.textContent as string,
+                    //@ts-ignore
+                    listenEvents: this.eventsHandled.filter(event => element[event] !== null)
                 }
             case document.DOCUMENT_NODE: {
                 element = element as Document
@@ -855,7 +720,9 @@ export class CoBrowsing {
                 return {
                     id: ++this._id,
                     type: document.DOCUMENT_NODE,
-                    children: [element.head, element.body].map(element => this.serializeDOMElement(element)).filter(serialize => serialize !== void 0) as HTMLElementSerialization[]
+                    children: [element.head, element.body].map(element => this.serializeDOMElement(element)).filter(serialize => serialize !== void 0) as HTMLElementSerialization[],
+                    //@ts-ignore
+                    listenEvents: this.eventsHandled.filter(event => element[event] !== null)
                 }
             }
 
@@ -863,12 +730,13 @@ export class CoBrowsing {
         return undefined;
     }
 
-    private buildElementNode(element: HTMLElementSerialization, virtualDocument?: Document, isIframe?: boolean): HTMLElement | Document | Text | undefined {
-        if (element.tag === "input") console.log(element.id)
+    private buildElementNode(element: HTMLElementSerialization, forwardEvents: Array<string>, virtualDocument?: Document, isIframe?: boolean): HTMLElement | Document | Text | undefined {
         switch (element.type) {
             case document.DOCUMENT_NODE: {
                 const doc = virtualDocument!.implementation.createDocument(null, null, null)
-                const children = element.children?.map(child => this.buildElementNode(child, isIframe ? virtualDocument : doc)) || []
+                const children = element.children?.map(child => this.buildElementNode(child, [], isIframe ? virtualDocument : doc)) || []
+                const eventsListen = element.listenEvents;
+                forwardEvents.forEach(event => eventsListen.indexOf(event) === -1 && eventsListen.push(event))
                 const HTMLNode = document.createElement("html")
                 //@ts-ignore
                 doc.__emploriumId = element.id;
@@ -881,27 +749,181 @@ export class CoBrowsing {
                 }
                 return virtualDocument
             }
+
             case document.ELEMENT_NODE: {
                 const node = virtualDocument?.createElement(element.tag as string) as HTMLElement
                 const attributes = element.attributes as {} || {}
-                const children = element.children?.map(child => this.buildElementNode(child, virtualDocument)) || []
+                const eventsListen = element.listenEvents;
+                if (forwardEvents.indexOf("onclick") === -1) forwardEvents.push("onclick")
+                if (element.tag === "input" || element.tag === "select" || element.tag === "textarea") forwardEvents.push("oninput", 'onkeyup')
+                forwardEvents.forEach(event => eventsListen.indexOf(event) === -1 && eventsListen.push(event))
+                const children = element.children?.map(child => this.buildElementNode(child, forwardEvents, virtualDocument)) || []
                 //@ts-ignore
                 node!.__emploriumId = element.id
                 //@ts-ignore
                 Object.keys(attributes).map(key => node?.setAttribute(key, attributes[key]))
                 children.map(child => node.appendChild(child as HTMLElement))
                 //@ts-ignore
-                map.set(node.__emploriumId, node)
+                this.map.set(node.__emploriumId, node)
+                forwardEvents.forEach(event => this.addEventListener(node, event))
                 return node
             }
+
             case document.TEXT_NODE: {
                 const textNode = virtualDocument?.createTextNode(element.content as string) as Text
+                const eventsListen = element.listenEvents;
+                forwardEvents.forEach(event => eventsListen.indexOf(event) === -1 && eventsListen.push(event))
                 ///@ts-ignore
                 textNode.__emploriumId = element.id;
+                ///@ts-ignore
+                this.map.set(textNode.__emploriumId, textNode)
+                forwardEvents.forEach(event => this.addEventListener(textNode, event))
                 return textNode
             }
-
         }
         return undefined
+    }
+
+    /**
+     * Add events to the node received in params
+     * @param node 
+     * @param eventType 
+     */
+    private addEventListener(node: HTMLElement | Text, eventType: string) {
+        const handler = (event: any) => {
+            event.stopPropagation();
+            event.preventDefault();
+            switch (eventType) {
+                case "onmouseover": case "onmouseout": case "onclick": case "onmouseenter": {
+                    const {
+                        clientX,
+                        clientY,
+                        ctrlKey,
+                        altKey,
+                        shiftKey,
+                        movementX,
+                        movementY,
+                        offsetX,
+                        pageY,
+                        pageX,
+                        screenX,
+                        screenY,
+                        x,
+                        y
+                    } = event
+
+                    const mouseEvent: MouseEvent = {
+                        type: MOUSE_EVENTS_TYPE.CLICK,
+                        //@ts-ignore
+                        id: node.__emploriumId,
+                        content: {
+                            clientX,
+                            clientY,
+                            ctrl: ctrlKey,
+                            alt: altKey,
+                            shift: shiftKey,
+                            movementX,
+                            movementY,
+                            offsetX,
+                            pageY,
+                            pageX,
+                            screenX,
+                            screenY,
+                            x,
+                            y
+                        }
+                    }
+
+                    switch (eventType) {
+                        case "onclick": {
+                            break
+                        }
+
+                        case "onmouseover": {
+                            mouseEvent.type = MOUSE_EVENTS_TYPE.MOUSE_OVER
+                            break
+                        }
+
+                        case "onmouseout": {
+                            mouseEvent.type = MOUSE_EVENTS_TYPE.MOUSE_OUT
+                            break
+                        }
+
+                        case "onmouseenter": {
+                            mouseEvent.type = MOUSE_EVENTS_TYPE.MOUSE_ENTER
+                            break
+                        }
+
+                        default: return void 0
+                    }
+
+                    const eventSend: HTMLEvent = {
+                        type: EVENTS_TYPE.MOUSE,
+                        data: mouseEvent
+                    }
+
+                    this.socket.send(JSON.stringify(eventSend))
+                    break
+                }
+
+                case "oninput": case "onchange": case "onkeypress": case "onkeyup": case "onkeydown": case "onblur": {
+                    console.log("Input events are executing..........")
+                    const { ctrlKey, code, altKey, keyCode, which, shiftKey } = event;
+                    const target = event.target;
+                    const value = target.value;
+                    const inputEvent: inputEvent = {
+                        id: target.__emploriumId,
+                        content: value,
+                        eventType: INPUT_EVENTS_TYPE.INPUT,
+                        alt: altKey,
+                        code: code,
+                        ctl: ctrlKey,
+                        keyCode,
+                        which: which,
+                        shift: shiftKey
+                    }
+                    const eventSend: HTMLEvent = {
+                        type: EVENTS_TYPE.INPUT,
+                        data: inputEvent
+                    }
+
+                    switch (eventType) {
+                        case "oninput": {
+                            break
+                        }
+
+                        case "onblur": {
+                            inputEvent.eventType = INPUT_EVENTS_TYPE.BLUR
+                            break
+                        }
+
+                        case "onchange": {
+                            inputEvent.eventType = INPUT_EVENTS_TYPE.CHANGE
+                            break
+                        }
+
+                        case "onkeydown": {
+                            inputEvent.eventType = INPUT_EVENTS_TYPE.KEYDOWN
+                            break
+                        }
+
+                        case "onkeypress": {
+                            inputEvent.eventType = INPUT_EVENTS_TYPE.KEYPRESS
+                            break
+                        }
+
+                        case "onkeyup": {
+                            inputEvent.eventType = INPUT_EVENTS_TYPE.KEYUP
+                            break
+                        }
+
+                        default: return void 0
+                    }
+                    this.socket.send(JSON.stringify(eventSend))
+                    break
+                }
+            }
+        }
+        node.addEventListener(eventType.substr(2), handler)
     }
 }
