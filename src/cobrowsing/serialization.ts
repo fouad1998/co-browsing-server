@@ -20,6 +20,7 @@ enum MOUSE_EVENTS_TYPE {
     MOUSE_ENTER,
     MOUSE_OUT,
     MOUSE_OVER,
+    MOUSE_MOVE,
     POSITION
 }
 enum WINDOW_EVENTS_TYPE {
@@ -130,7 +131,7 @@ export class CoBrowsing {
     private config: Partial<CoBrowsingInterface> = {}
     private socket: WebSocket
     private allowToSendEvent: boolean = true
-    private readonly eventsHandled = ['onmouseover', 'onmouseenter', 'onmouseout', 'oninput', 'onchange', 'onkeypress', 'onkeydown']
+    private readonly eventsHandled = ['onmouseover', 'onmouseenter', 'onmouseout', "onmousemove", 'oninput', 'onchange', 'onkeypress', 'onkeydown']
 
     constructor(props: CoBrowsingInterface) {
         if (!props.socket) {
@@ -153,6 +154,8 @@ export class CoBrowsing {
         this.setConfig = this.setConfig.bind(this)
         this.buildDOM = this.buildDOM.bind(this)
         this.executeEvent = this.executeEvent.bind(this)
+        this.listenToWindowEvents = this.listenToWindowEvents.bind(this)
+        this.listenToMousePosition = this.listenToMousePosition.bind(this)
     }
 
     setConfig(config: CoBrowsingInterface) {
@@ -182,7 +185,8 @@ export class CoBrowsing {
         // Listen  to the DOM changement
         this.startMutationObserver(document)
         // Listen to window event
-        this.listenToWindowResize()
+        this.listenToWindowEvents()
+        // 
         // Make virtual cursor 
         const mouseCursor = document.createElement("img")
         this.mouse = document.createElement("div")
@@ -204,48 +208,40 @@ export class CoBrowsing {
      * 
      * NOTE: THE CLIENT SIDE WHO FOLLOW, NOT THE AGENCY SIDE
      */
-    private listenToWindowResize() {
-        const resizeHandler = () => {
-            const { innerWidth, innerHeight } = window
-            // Window event content
-            const event: WindowEvent = {
-                type: WINDOW_EVENTS_TYPE.RESIZE,
-                content: {
-                    height: innerHeight,
-                    width: innerWidth,
-                }
-            }
-            // Generate an event to send
-            const eventToSend: HTMLEvent = {
-                type: EVENTS_TYPE.WINDOW,
-                data: event
-            }
-            // Send the event 
-            this.socket.send(JSON.stringify(eventToSend))
-        }
-        window.addEventListener("resize", resizeHandler)
-        // Send the first set of dimension
-        resizeHandler()
-    }
-
-    private listenToWindowEventRemotePeer() {
-        // Change the wrapper scale in order to keep the same forme of the dom in both sides
+    private listenToWindowEvents() {
         const resizeHandler = () => {
             const { innerHeight, innerWidth } = window
-            // Get needed data from iframe
-            const width = this.iframeWrapper!.style.width.replace(/(^[0-9]+).+/, "$1")
-            const height = this.iframeWrapper!.style.height.replace(/(^[0-9]+).+/, "$1")
-            console.log({ width, height })
-            // Make the scale
-            const xScale = !width ? 1 : innerWidth / +width
-            const yScale = !height ? 1 : innerHeight / +height
-            // Set the Scale
-            this.wrapper!.style.transform = `scaleX(${xScale}) scaleY(${yScale})`
+            if (this.config.remotePeer) {
+                // Get needed data from iframe
+                const width = this.iframeWrapper!.style.width.replace(/(^[0-9]+).+/, "$1")
+                const height = this.iframeWrapper!.style.height.replace(/(^[0-9]+).+/, "$1")
+                console.log({ width, height })
+                // Make the scale
+                const xScale = !width ? 1 : innerWidth / +width
+                const yScale = !height ? 1 : innerHeight / +height
+                // Set the Scale
+                this.wrapper!.style.transform = `scaleX(${xScale}) scaleY(${yScale})`
+            } else {
+                // Window event content
+                const event: WindowEvent = {
+                    type: WINDOW_EVENTS_TYPE.RESIZE,
+                    content: {
+                        height: innerHeight,
+                        width: innerWidth,
+                    }
+                }
+                // Generate an event to send
+                const eventToSend: HTMLEvent = {
+                    type: EVENTS_TYPE.WINDOW,
+                    data: event
+                }
+                // Send the event 
+                this.socket.send(JSON.stringify(eventToSend))
+            }
         }
-
         // Scroll event
         const scrollHandler = () => {
-            const { scrollY, scrollX } = this.iframe!.contentWindow as Window
+            const { scrollY, scrollX } = this.config.remotePeer ? this.iframe!.contentWindow as Window : window
             if (!isNaN(scrollX) && !isNaN(scrollY)) {
                 const event: WindowEvent = {
                     type: WINDOW_EVENTS_TYPE.SCROLL,
@@ -261,13 +257,19 @@ export class CoBrowsing {
                 this.socket.send(JSON.stringify(eventSend))
             }
         }
+
         window.addEventListener("resize", resizeHandler)
-        this.iframe!.contentWindow!.addEventListener("scroll", scrollHandler)
+        if (this.config.remotePeer) {
+            this.iframe!.contentWindow!.addEventListener("scroll", scrollHandler)
+        } else {
+            window.addEventListener("scroll", scrollHandler)
+        }
+        // Send the first set of dimension
+        resizeHandler()
     }
 
-    private listenToMousePosition(document: Document) {
-        document.body.addEventListener("mouseover", (event) => {
-            console.log("Mouse Position.............")
+    private listenToMousePosition() {
+        const mousePositionHandler = (event: any) => {
             // get the mouse position
             const { clientX, clientY } = event
             // Create the event content
@@ -285,7 +287,12 @@ export class CoBrowsing {
                 data: eventContent
             }
             this.socket.send(JSON.stringify(eventSend))
-        })
+        }
+        if (this.config.remotePeer) {
+            this.iframe!.contentDocument!.body.addEventListener("mousemove", mousePositionHandler)
+        } else {
+            document.body.addEventListener("mousemove", mousePositionHandler)
+        }
     }
 
     private mutationObserverHandler(events: Array<any>) {
@@ -369,9 +376,9 @@ export class CoBrowsing {
         try {
             const eventString = event.data
             const parsedEvent = JSON.parse(eventString) as HTMLEvent
-            // the object in this case is not used to execute commande not, because we are in the remote pair 
-            if (this.config.remotePeer && parsedEvent.type !== EVENTS_TYPE.SNAPSHOT && parsedEvent.type !== EVENTS_TYPE.DOM_CHANGE && parsedEvent.type !== EVENTS_TYPE.WINDOW) return undefined
             // type is the type of event we received to execute, if the type doesn't exist so it should not be executed
+            console.clear()
+            console.log("recevied event......", parsedEvent.type)
             switch (parsedEvent.type) {
                 case EVENTS_TYPE.INPUT: {
                     const eventContent = parsedEvent.data as inputEvent
@@ -468,6 +475,29 @@ export class CoBrowsing {
 
                 case EVENTS_TYPE.MOUSE: {
                     console.log("Mouse event to execute....")
+                    const recursiveHandlerCall = (node: HTMLElement, handler: (node: HTMLElement) => Function, stopPropagation?: false) => {
+                        const func = handler(node)
+                        if (func && typeof func === "function") {
+                            func({
+                                clientX,
+                                clientY,
+                                ctrlKey,
+                                altKey,
+                                shiftKey,
+                                movementX,
+                                movementY,
+                                offsetX,
+                                pageY,
+                                pageX,
+                                screenX,
+                                screenY,
+                                x,
+                                y
+                            })
+                        }
+                        const parent = node!.offsetParent as HTMLElement
+                        if (parent) recursiveHandlerCall(parent, handler)
+                    }
                     const eventContent = parsedEvent.data as MouseEvent
                     const {
                         clientX,
@@ -475,16 +505,17 @@ export class CoBrowsing {
                         ctrl: ctrlKey,
                         alt: altKey,
                         shift: shiftKey,
-                        // movementX,
-                        // movementY,
-                        // offsetX,
-                        // pageY,
-                        // pageX,
+                        movementX,
+                        movementY,
+                        offsetX,
+                        pageY,
+                        pageX,
                         screenX,
                         screenY,
-                        // x,
-                        // y
+                        x,
+                        y
                     } = eventContent.content
+
                     const node = this.map.get(eventContent.id)
                     switch (eventContent.type) {
                         case MOUSE_EVENTS_TYPE.CLICK: {
@@ -504,8 +535,22 @@ export class CoBrowsing {
                         }
 
                         case MOUSE_EVENTS_TYPE.MOUSE_OVER: {
+
                             break
                         }
+
+                        case MOUSE_EVENTS_TYPE.MOUSE_ENTER: {
+                            break
+                        }
+
+                        case MOUSE_EVENTS_TYPE.MOUSE_MOVE: {
+                            break
+                        }
+
+                        case MOUSE_EVENTS_TYPE.MOUSE_OUT: {
+                            break
+                        }
+
 
                         case MOUSE_EVENTS_TYPE.POSITION: {
                             this.mouse!.style.left = clientX + "px";
@@ -608,9 +653,9 @@ export class CoBrowsing {
                     // Listen to the changement in the DOM (created by css)
                     this.startMutationObserver(this.iframe?.contentDocument as Document)
                     // Listen to some events on The window  
-                    this.listenToWindowEventRemotePeer()
+                    this.listenToWindowEvents()
                     // Listen to the mouse postion over the body component
-                    this.listenToMousePosition(this.iframe!.contentDocument as Document)
+                    this.listenToMousePosition()
                     break;
                 }
             }
@@ -794,7 +839,7 @@ export class CoBrowsing {
             event.stopPropagation();
             event.preventDefault();
             switch (eventType) {
-                case "onmouseover": case "onmouseout": case "onclick": case "onmouseenter": {
+                case "onmouseover": case "onmouseout": case "onclick": case "onmouseenter": case "onmousemove": {
                     const {
                         clientX,
                         clientY,
@@ -851,6 +896,11 @@ export class CoBrowsing {
 
                         case "onmouseenter": {
                             mouseEvent.type = MOUSE_EVENTS_TYPE.MOUSE_ENTER
+                            break
+                        }
+
+                        case "onmousemove": {
+                            mouseEvent.type = MOUSE_EVENTS_TYPE.MOUSE_MOVE
                             break
                         }
 
