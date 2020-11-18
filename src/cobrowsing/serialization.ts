@@ -1,122 +1,37 @@
-enum EVENTS_TYPE {
-    INPUT,
-    MOUSE,
-    DOM_CHANGE,
-    REMOVED_ELEMENT_FROM_DOM,
-    ATTRIBUTE_CHANGE,
-    SNAPSHOT,
-    WINDOW
+import {
+    AttributeEvent, DOMEvent, EVENTS_TYPE,
+    HTMLElementSerialization, INPUT_EVENTS_TYPE,
+    MOUSE_EVENTS_TYPE, SnapShotEvent,
+    WINDOW_EVENTS_TYPE, WindowEvent, mouseCoordonate,
+    DOMEventChange, DOM_EVENTS_TYPE,
+    HTMLElementRemovedEvent, Scroll, Resize, InputEvent, input
+} from './interface'
+
+
+// Mouse Events 
+export interface MouseEvent {
+    id: number;
+    type: MOUSE_EVENTS_TYPE;
+    content: mouseCoordonate;
 }
-enum INPUT_EVENTS_TYPE {
-    INPUT = 0,
-    BLUR,
-    CHANGE,
-    KEYPRESS,
-    KEYDOWN,
-    KEYUP,
+
+// The whole objec who contains all kind of event that can be caught
+export interface HTMLEvent {
+    type: EVENTS_TYPE;
+    data: InputEvent | DOMEvent | WindowEvent | MouseEvent
 }
-enum MOUSE_EVENTS_TYPE {
-    CLICK = 0,
-    MOUSE_ENTER,
-    MOUSE_OUT,
-    MOUSE_OVER,
-    MOUSE_MOVE,
-    POSITION
-}
-enum WINDOW_EVENTS_TYPE {
-    RESIZE = 0,
-    SCROLL,
-}
-interface CoBrowsingInterface {
+
+export interface CoBrowsingInterface {
     root: HTMLElement;
     remotePeer: boolean // If the co-browser is used to execute remote event
     socket: WebSocket// the websocket connection, it can be other thing if we want like (RTC, XHR...)
 }
-interface HTMLElementSerialization {
-    id: number;
-    type: number;
-    tag?: string;
-    content?: string;
-    attributes?: {};
-    children?: Array<HTMLElementSerialization>;
-    listenEvents: Array<string>;
-}
-// When the HTML element has lost number of children
-interface HTMLElementRemovedEvent {
-    chidlrenId: Array<number>
-    id: number
-}
-// mouse click event
-interface mouseCoordonate {
-    clientX: number,
-    clientY: number,
-    ctrl?: boolean,
-    alt?: boolean,
-    shift?: boolean,
-    movementX?: number,
-    movementY?: number,
-    offsetX?: number,
-    pageY?: number,
-    pageX?: number,
-    screenX?: number,
-    screenY?: number,
-    x?: number,
-    y?: number
-}
-//Scroll event
-interface Scroll {
-    x: number;
-    y: number;
-}
-// Resize event
-interface Resize {
-    width: number;
-    height: number;
-}
-// input change the value
-interface inputEvent {
-    id: number;
-    content: string;
-    eventType: number;
-    ctl?: boolean;
-    alt?: boolean;
-    shift?: boolean;
-    code?: string;
-    keyCode?: number;
-    which?: number;
-}
-// DOM Event, kind of element change all his chidlren or add new children to the list
-interface DOMEvent {
-    id: number;
-    content: HTMLElementSerialization
-}
-// Attriute of an element has changed attributes
-interface AttributeEvent {
-    id: number;
-    content: {}
-}
-// The first kind of event can be sent to the remote peer,
-interface SnapShotEvent {
-    href: string
-    content: HTMLElementSerialization
-}
-// Mouse Events 
-interface MouseEvent {
-    id: number;
-    type: number;
-    content: mouseCoordonate;
-}
-// Window Event
-interface WindowEvent {
-    type: number
-    content: Resize | Scroll
-}
-// The whole objec who contains all kind of event that can be cought
-interface HTMLEvent {
-    type: number;
-    data: inputEvent | DOMEvent | AttributeEvent | SnapShotEvent | HTMLElementRemovedEvent | HTMLElementSerialization | WindowEvent | MouseEvent
-}
 
+export interface LastEventOccurred {
+    throwFunc: boolean
+    content: HTMLEvent | null
+    allowedToSend: boolean
+}
 
 const map = new Map<number, HTMLElement>()
 
@@ -127,10 +42,14 @@ export class CoBrowsing {
     private mouse: HTMLDivElement | null = null
     private iframeWrapper: HTMLDivElement | null = null
     private wrapper: HTMLDivElement | null = null
+    private stopDoing: HTMLDivElement | null = null
     private root: HTMLElement
     private config: Partial<CoBrowsingInterface> = {}
     private socket: WebSocket
-    private allowToSendEvent: boolean = true
+    private lastEventOccurred: LastEventOccurred = { content: null, allowedToSend: true, throwFunc: true }
+    private restrictionTime: number = 50 // 50ms
+    private receivingScrollEvent: boolean = false
+    private isMouseScroll: boolean = false
     private readonly eventsHandled = ['onmouseover', 'onmouseenter', 'onmouseout', "onmousemove", 'oninput', 'onchange', 'onkeypress', 'onkeydown']
 
     constructor(props: CoBrowsingInterface) {
@@ -175,17 +94,23 @@ export class CoBrowsing {
             href: window.location.href,
             content: DOMVirual as HTMLElementSerialization
         }
+        const domEvent: DOMEvent = {
+            content: event,
+            type: DOM_EVENTS_TYPE.SNAPSHOT
+        }
         // The event to send who contains the type of the event and event data (event content)
         const eventSend: HTMLEvent = {
-            data: event,
-            type: EVENTS_TYPE.SNAPSHOT,
+            data: domEvent,
+            type: EVENTS_TYPE.DOM,
         }
         // Send the content through the socket
-        this.socket.send(JSON.stringify(eventSend))
+        this.sendEvent(eventSend)
         // Listen  to the DOM changement
         this.startMutationObserver(document)
         // Listen to window event
         this.listenToWindowEvents()
+        // Listen to mouse position
+        this.listenToMousePosition()
         // 
         // Make virtual cursor 
         const mouseCursor = document.createElement("img")
@@ -236,12 +161,13 @@ export class CoBrowsing {
                     data: event
                 }
                 // Send the event 
-                this.socket.send(JSON.stringify(eventToSend))
+                this.sendEvent(eventToSend)
             }
         }
         // Scroll event
         const scrollHandler = () => {
             const { scrollY, scrollX } = this.config.remotePeer ? this.iframe!.contentWindow as Window : window
+
             if (!isNaN(scrollX) && !isNaN(scrollY)) {
                 const event: WindowEvent = {
                     type: WINDOW_EVENTS_TYPE.SCROLL,
@@ -254,15 +180,35 @@ export class CoBrowsing {
                     type: EVENTS_TYPE.WINDOW,
                     data: event
                 }
-                this.socket.send(JSON.stringify(eventSend))
+
+                if (this.config.remotePeer) {
+                    // We are receiving the event from the client side, 
+                    if (this.receivingScrollEvent) {
+                        this.stopDoing!.style.display = "flex"
+                        setTimeout(() => this.stopDoing!.style.display = "none", 1500)
+                        return void 0
+                    }
+                } else {
+                    // this event is not created by mouse, but is created by the received events
+                    if (this.receivingScrollEvent && !this.isMouseScroll) return void 0
+                }
+                this.sendEvent(eventSend)
             }
+
+            this.isMouseScroll = false
         }
+        const wheelScroll = () => {
+            this.isMouseScroll = true;
+        }
+
 
         window.addEventListener("resize", resizeHandler)
         if (this.config.remotePeer) {
             this.iframe!.contentWindow!.addEventListener("scroll", scrollHandler)
         } else {
             window.addEventListener("scroll", scrollHandler)
+            window.addEventListener("wheel", wheelScroll)
+            window.addEventListener("mousewheel", wheelScroll)
         }
         // Send the first set of dimension
         resizeHandler()
@@ -286,12 +232,30 @@ export class CoBrowsing {
                 type: EVENTS_TYPE.MOUSE,
                 data: eventContent
             }
-            this.socket.send(JSON.stringify(eventSend))
+            this.sendEvent(eventSend)
+        }
+        //Mouse out of screen handler
+        const mouseOut = () => {
+            const mouseEvent: MouseEvent = {
+                id: -1,
+                type: MOUSE_EVENTS_TYPE.OUT_OF_SCREEN,
+                content: {
+                    clientY: 0,
+                    clientX: 0,
+                }
+            }
+            const eventSend: HTMLEvent = {
+                data: mouseEvent,
+                type: EVENTS_TYPE.MOUSE
+            }
+            this.sendEvent(eventSend)
         }
         if (this.config.remotePeer) {
             this.iframe!.contentDocument!.body.addEventListener("mousemove", mousePositionHandler)
+            this.iframe!.contentDocument!.body.addEventListener("mouseout", mouseOut)
         } else {
             document.body.addEventListener("mousemove", mousePositionHandler)
+            document.body.addEventListener("mouseout", mouseOut)
         }
     }
 
@@ -309,11 +273,15 @@ export class CoBrowsing {
                             content: { [attributeName]: newValueOfAttribute },
                             id
                         }
-                        const eventSend: HTMLEvent = {
-                            type: EVENTS_TYPE.ATTRIBUTE_CHANGE,
-                            data: event
+                        const domEvent: DOMEvent = {
+                            type: DOM_EVENTS_TYPE.ATTRIBUTE_CHANGE,
+                            content: event,
                         }
-                        this.socket.send(JSON.stringify(eventSend))
+                        const eventSend: HTMLEvent = {
+                            type: EVENTS_TYPE.DOM,
+                            data: domEvent
+                        }
+                        this.sendEvent(eventSend)
                     }
                     break
                 }
@@ -322,7 +290,7 @@ export class CoBrowsing {
                     const { addedNodes, removedNodes, target } = event
                     if (Array.from(addedNodes).length === 0) {
                         // there is no element removed, too strange, it shouldn't be the case
-                        if (Array.from(removedNodes).length === 0) return
+                        if (Array.from(removedNodes).length === 0) return void 0
                         // The id of elements got remove from the DOM
                         const nodeRemovedId: Array<number> = []
                         for (const node of removedNodes) {
@@ -332,23 +300,31 @@ export class CoBrowsing {
                             chidlrenId: nodeRemovedId,
                             id: target.__emploriumId
                         }
-                        const eventSend: HTMLEvent = {
-                            data: event,
-                            type: EVENTS_TYPE.REMOVED_ELEMENT_FROM_DOM,
+                        const domEvent: DOMEvent = {
+                            type: DOM_EVENTS_TYPE.REMOVED_ELEMENT_FROM_DOM,
+                            content: event
                         }
-                        this.socket.send(JSON.stringify(eventSend))
+                        const eventSend: HTMLEvent = {
+                            data: domEvent,
+                            type: EVENTS_TYPE.DOM,
+                        }
+                        this.sendEvent(eventSend)
                     } else {
                         // IN this case the element can be added as can be removed
                         const serialize = this.serializeDOMElement(target) as HTMLElementSerialization
-                        const event: DOMEvent = {
+                        const event: DOMEventChange = {
                             content: serialize,
                             id: target.__emploriumId,
                         }
-                        const eventSend: HTMLEvent = {
-                            data: event,
-                            type: EVENTS_TYPE.DOM_CHANGE
+                        const domEvent: DOMEvent = {
+                            type: DOM_EVENTS_TYPE.DOM_CHANGE,
+                            content: event
                         }
-                        this.socket.send(JSON.stringify(eventSend))
+                        const eventSend: HTMLEvent = {
+                            data: domEvent,
+                            type: EVENTS_TYPE.DOM
+                        }
+                        this.sendEvent(eventSend)
                     }
                     break
                 }
@@ -371,22 +347,46 @@ export class CoBrowsing {
         this.rebuildDOM(DOM, this.iframe?.contentDocument as Document, true)
     }
 
+    private sendEvent(event: HTMLEvent) {
+        // If the event to send is not allowed to be send, we save it to send it later
+        if (!this.lastEventOccurred.allowedToSend) {
+            // If the event we want to send is the same type, we don't allow till the time restriction is out 
+            if (this.lastEventOccurred.content!.type === event.type && this.lastEventOccurred.content!.data.type === event.data.type) {
+                this.lastEventOccurred.content = event;
+                if (this.lastEventOccurred.throwFunc) {
+                    setTimeout(() => {
+                        this.sendEvent(this.lastEventOccurred!.content!)
+                        this.lastEventOccurred.content = null
+                        this.lastEventOccurred.throwFunc = true;
+                        this.lastEventOccurred.allowedToSend = true;
+                    }, this.restrictionTime)
+                    this.lastEventOccurred!.throwFunc = false;
+                }
+
+                return void 0
+            }
+        }
+        this.lastEventOccurred.content = event;
+        this.lastEventOccurred.allowedToSend = false;
+        this.socket.send(JSON.stringify(event))
+    }
+
     private executeEvent = (event: MessageEvent): void => {
         // Try to execute an event using received event structure
         try {
             const eventString = event.data
             const parsedEvent = JSON.parse(eventString) as HTMLEvent
             // type is the type of event we received to execute, if the type doesn't exist so it should not be executed
-            console.clear()
-            console.log("recevied event......", parsedEvent.type)
+            console.log("recevied event......")
+            this.receivingScrollEvent = false
             switch (parsedEvent.type) {
                 case EVENTS_TYPE.INPUT: {
-                    const eventContent = parsedEvent.data as inputEvent
-                    const node = this.map.get(eventContent.id) as HTMLInputElement
-                    switch (eventContent.eventType) {
+                    const eventContent = parsedEvent.data as InputEvent
+                    const node = this.map.get(eventContent.content.id) as HTMLInputElement
+                    switch (eventContent.type) {
                         case INPUT_EVENTS_TYPE.CHANGE: {
                             console.log("input change ....", eventContent)
-                            const { content } = eventContent
+                            const { content } = eventContent.content
                             node.value = content
                             if (node?.onchange) {
                                 //@ts-ignore
@@ -397,7 +397,7 @@ export class CoBrowsing {
 
                         case INPUT_EVENTS_TYPE.INPUT: {
                             console.log("input  ....", eventContent)
-                            const { content } = eventContent
+                            const { content } = eventContent.content
                             node.value = content
                             if (node?.onchange) {
                                 //@ts-ignore
@@ -409,7 +409,7 @@ export class CoBrowsing {
                         case INPUT_EVENTS_TYPE.KEYPRESS: {
                             console.log("input keypress ....", eventContent)
                             // Grap all needed fields for this event
-                            const { content, alt, code, ctl, keyCode, shift, which } = eventContent
+                            const { content, alt, code, ctl, keyCode, shift, which } = eventContent.content
                             node.value = content
                             if (node?.onkeypress) {
                                 //@ts-ignore
@@ -430,7 +430,7 @@ export class CoBrowsing {
 
                         case INPUT_EVENTS_TYPE.KEYDOWN: {
                             // Execute the key dom
-                            const { content, alt, code, ctl, keyCode, shift, which } = eventContent
+                            const { content, alt, code, ctl, keyCode, shift, which } = eventContent.content
                             node.value = content
                             if (node?.onkeydown) {
                                 //@ts-ignore
@@ -451,7 +451,7 @@ export class CoBrowsing {
 
                         case INPUT_EVENTS_TYPE.KEYUP: {
                             // Execute the keyup event
-                            const { content, alt, code, ctl, keyCode, shift, which } = eventContent
+                            const { content, alt, code, ctl, keyCode, shift, which } = eventContent.content
                             node.value = content
                             if (node?.onkeyup) {
                                 //@ts-ignore
@@ -553,61 +553,91 @@ export class CoBrowsing {
 
 
                         case MOUSE_EVENTS_TYPE.POSITION: {
+                            this.mouse!.style.display = "block";
                             this.mouse!.style.left = clientX + "px";
                             this.mouse!.style.top = clientY + "px";
+                            break
+                        }
+
+                        case MOUSE_EVENTS_TYPE.OUT_OF_SCREEN: {
+                            this.mouse!.style.display = "none";
                             break
                         }
                     }
                     break
                 }
 
-                case EVENTS_TYPE.ATTRIBUTE_CHANGE: {
-                    const eventContent = parsedEvent.data as AttributeEvent
-                    const node = map.get(eventContent.id)
-                    //@ts-ignore
-                    Object.keys(eventContent.content).forEach(key => node?.setAttribute(key, eventContent.content[key]))
-                    break
-                }
-
-                case EVENTS_TYPE.DOM_CHANGE: {
+                case EVENTS_TYPE.DOM: {
                     const eventContent = parsedEvent.data as DOMEvent
-                    const node = map.get(eventContent.id)
-
-                    const removeIDs = (child: HTMLElement) => {
-                        //@ts-ignore
-                        const id = child.__emploriumId
-                        map.delete(id)
-                        child.childNodes.forEach(child => removeIDs(child as HTMLElement))
-                    }
-                    node?.childNodes.forEach(child => {
-                        removeIDs(child as HTMLElement)
-                        child.remove()
-                    })
-
-                    const builded = this.buildElementNode(eventContent.content as HTMLElementSerialization, []);
-                    builded?.childNodes.forEach(child => node?.append(child))
-                    break;
-                }
-
-                case EVENTS_TYPE.REMOVED_ELEMENT_FROM_DOM: {
-                    const eventContent = parsedEvent.data as HTMLElementRemovedEvent
-                    const node = map.get(eventContent.id)
-                    const idToRemove = eventContent.chidlrenId
-
-                    const removeIDs = (child: HTMLElement) => {
-                        //@ts-ignore
-                        const id = child.__emploriumId
-                        map.delete(id)
-                        child.childNodes.forEach(child => removeIDs(child as HTMLElement))
-                    }
-                    node?.childNodes.forEach(child => {
-                        //@ts-ignore
-                        if (idToRemove.findIndex(childId => childId === child.__emploriumId) !== -1) {
-                            removeIDs(child as HTMLElement)
-                            child.remove()
+                    switch (eventContent.type) {
+                        case DOM_EVENTS_TYPE.ATTRIBUTE_CHANGE: {
+                            const content = eventContent.content as AttributeEvent
+                            const node = map.get(content.id)
+                            //@ts-ignore
+                            Object.keys(content.content).forEach(key => node?.setAttribute(key, content.content[key]))
+                            break
                         }
-                    })
-                    break;
+
+                        case DOM_EVENTS_TYPE.DOM_CHANGE: {
+                            const content = eventContent.content as DOMEventChange
+                            const node = map.get(content.id)
+
+                            const removeIDs = (child: HTMLElement) => {
+                                //@ts-ignore
+                                const id = child.__emploriumId
+                                map.delete(id)
+                                child.childNodes.forEach(child => removeIDs(child as HTMLElement))
+                            }
+                            node?.childNodes.forEach(child => {
+                                removeIDs(child as HTMLElement)
+                                child.remove()
+                            })
+
+                            const builded = this.buildElementNode(content.content as HTMLElementSerialization, []);
+                            builded?.childNodes.forEach(child => node?.append(child))
+                            break
+                        }
+
+                        case DOM_EVENTS_TYPE.REMOVED_ELEMENT_FROM_DOM: {
+                            const content = eventContent.content as HTMLElementRemovedEvent
+                            const node = map.get(content.id)
+                            const idToRemove = content.chidlrenId
+
+                            const removeIDs = (child: HTMLElement) => {
+                                //@ts-ignore
+                                const id = child.__emploriumId
+                                map.delete(id)
+                                child.childNodes.forEach(child => removeIDs(child as HTMLElement))
+                            }
+                            node?.childNodes.forEach(child => {
+                                //@ts-ignore
+                                if (idToRemove.findIndex(childId => childId === child.__emploriumId) !== -1) {
+                                    removeIDs(child as HTMLElement)
+                                    child.remove()
+                                }
+                            })
+                            break;
+                        }
+
+                        case DOM_EVENTS_TYPE.SNAPSHOT: {
+                            // substract the event
+                            const content = eventContent.content as SnapShotEvent
+                            // substract the DOM content
+                            const DOM = content.content
+                            // Setup the wrapper and iframe to heberge the new received dom
+                            this.setup()
+                            // Start building the DOM
+                            this.buildDOM(DOM)
+                            // Listen to the changement in the DOM (created by css)
+                            this.startMutationObserver(this.iframe?.contentDocument as Document)
+                            // Listen to some events on The window  
+                            this.listenToWindowEvents()
+                            // Listen to the mouse postion over the body component
+                            this.listenToMousePosition()
+                            break;
+                        }
+                    }
+                    break
                 }
 
                 case EVENTS_TYPE.WINDOW: {
@@ -633,30 +663,17 @@ export class CoBrowsing {
 
                         case WINDOW_EVENTS_TYPE.SCROLL: {
                             console.log("Scroll event received....")
+                            this.receivingScrollEvent = true
                             const { x, y } = eventContent.content as Scroll
-                            window.scrollTo(x, y)
+                            if (this.config.remotePeer) {
+                                this.iframe!.contentWindow!.scrollTo(x, y)
+                            } else {
+                                window.scrollTo(x, y)
+                            }
                             break
                         }
                     }
                     break
-                }
-
-                case EVENTS_TYPE.SNAPSHOT: {
-                    // substract the event
-                    const eventContent = parsedEvent.data as SnapShotEvent
-                    // substract the DOM content
-                    const DOM = eventContent.content
-                    // Setup the wrapper and iframe to heberge the new received dom
-                    this.setup()
-                    // Start building the DOM
-                    this.buildDOM(DOM)
-                    // Listen to the changement in the DOM (created by css)
-                    this.startMutationObserver(this.iframe?.contentDocument as Document)
-                    // Listen to some events on The window  
-                    this.listenToWindowEvents()
-                    // Listen to the mouse postion over the body component
-                    this.listenToMousePosition()
-                    break;
                 }
             }
         } catch {
@@ -710,6 +727,15 @@ export class CoBrowsing {
         this.wrapper.append(this.iframeWrapper)
         this.wrapper.append(this.mouse)
         this.root.append(this.wrapper)
+
+        //Stop making event
+        this.stopDoing = this.iframe.contentDocument!.createElement("div")
+        this.stopDoing!.setAttribute("style", `background: #000A; color: white; display: none; justify-content: center; 
+                    align-items: center; position: fixed; top: 0; left: 0; right: 0; bottom: 0; height: 100vh; width: 100vw;
+                    z-index: 100000000; font-size: 2em`)
+        this.stopDoing.innerText = "Please, stop scrolling the client in the other hand try to navigate somewhere else"
+        this.iframe.contentDocument!.body.append(this.stopDoing)
+
     }
 
     private serializeDOMElement(element: HTMLElement | Document): HTMLElementSerialization | undefined {
@@ -912,7 +938,7 @@ export class CoBrowsing {
                         data: mouseEvent
                     }
 
-                    this.socket.send(JSON.stringify(eventSend))
+                    this.sendEvent(eventSend)
                     break
                 }
 
@@ -921,16 +947,19 @@ export class CoBrowsing {
                     const { ctrlKey, code, altKey, keyCode, which, shiftKey } = event;
                     const target = event.target;
                     const value = target.value;
-                    const inputEvent: inputEvent = {
+                    const inputContent: input = {
                         id: target.__emploriumId,
                         content: value,
-                        eventType: INPUT_EVENTS_TYPE.INPUT,
                         alt: altKey,
                         code: code,
                         ctl: ctrlKey,
                         keyCode,
                         which: which,
                         shift: shiftKey
+                    }
+                    const inputEvent: InputEvent = {
+                        content: inputContent,
+                        type: INPUT_EVENTS_TYPE.INPUT
                     }
                     const eventSend: HTMLEvent = {
                         type: EVENTS_TYPE.INPUT,
@@ -943,33 +972,33 @@ export class CoBrowsing {
                         }
 
                         case "onblur": {
-                            inputEvent.eventType = INPUT_EVENTS_TYPE.BLUR
+                            inputEvent.type = INPUT_EVENTS_TYPE.BLUR
                             break
                         }
 
                         case "onchange": {
-                            inputEvent.eventType = INPUT_EVENTS_TYPE.CHANGE
+                            inputEvent.type = INPUT_EVENTS_TYPE.CHANGE
                             break
                         }
 
                         case "onkeydown": {
-                            inputEvent.eventType = INPUT_EVENTS_TYPE.KEYDOWN
+                            inputEvent.type = INPUT_EVENTS_TYPE.KEYDOWN
                             break
                         }
 
                         case "onkeypress": {
-                            inputEvent.eventType = INPUT_EVENTS_TYPE.KEYPRESS
+                            inputEvent.type = INPUT_EVENTS_TYPE.KEYPRESS
                             break
                         }
 
                         case "onkeyup": {
-                            inputEvent.eventType = INPUT_EVENTS_TYPE.KEYUP
+                            inputEvent.type = INPUT_EVENTS_TYPE.KEYUP
                             break
                         }
 
                         default: return void 0
                     }
-                    this.socket.send(JSON.stringify(eventSend))
+                    this.sendEvent(eventSend)
                     break
                 }
             }
