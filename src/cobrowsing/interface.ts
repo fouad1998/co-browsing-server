@@ -2,11 +2,14 @@ export enum EVENTS_TYPE {
   INPUT = 0,
   MOUSE,
   DOM,
+  SELECTION,
   WINDOW
 }
 export enum WINDOW_EVENTS_TYPE {
   RESIZE = 0,
   SCROLL,
+  LOADED,
+
 }
 export enum DOM_EVENTS_TYPE {
   DOM_CHANGE = 0,
@@ -136,5 +139,10 @@ export interface InputEvent {
 }
 
 
-
-
+// Hightlighted event
+export interface HightLightedEvent {
+  id: number;
+  type: number;
+  content?: string;
+  clear?: boolean;
+}

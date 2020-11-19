@@ -4,7 +4,7 @@ import {
     MOUSE_EVENTS_TYPE, SnapShotEvent,
     WINDOW_EVENTS_TYPE, WindowEvent, mouseCoordonate,
     DOMEventChange, DOM_EVENTS_TYPE,
-    HTMLElementRemovedEvent, Scroll, Resize, InputEvent, input
+    HTMLElementRemovedEvent, Scroll, Resize, InputEvent, input, HightLightedEvent
 } from './interface'
 
 
@@ -18,7 +18,7 @@ export interface MouseEvent {
 // The whole objec who contains all kind of event that can be caught
 export interface HTMLEvent {
     type: EVENTS_TYPE;
-    data: InputEvent | DOMEvent | WindowEvent | MouseEvent
+    data: InputEvent | DOMEvent | WindowEvent | MouseEvent | HightLightedEvent
 }
 
 export interface CoBrowsingInterface {
@@ -33,8 +33,6 @@ export interface LastEventOccurred {
     allowedToSend: boolean
 }
 
-const map = new Map<number, HTMLElement>()
-
 export class CoBrowsing {
     private _id = -1;
     private map: Map<number, HTMLElement | Document>
@@ -47,7 +45,7 @@ export class CoBrowsing {
     private config: Partial<CoBrowsingInterface> = {}
     private socket: WebSocket
     private lastEventOccurred: LastEventOccurred = { content: null, allowedToSend: true, throwFunc: true }
-    private restrictionTime: number = 50 // 50ms
+    private restrictionTime: number = 100 // 50ms
     private receivingScrollEvent: boolean = false
     private isMouseScroll: boolean = false
     private building: boolean = false
@@ -93,7 +91,6 @@ export class CoBrowsing {
         console.log(this._id)
         console.log(DOMVirual)
         console.log(JSON.parse(JSON.stringify(DOMVirual)))
-        debugger;
         // Create the event content
         const event: SnapShotEvent = {
             href: window.location.href,
@@ -173,7 +170,6 @@ export class CoBrowsing {
         // Scroll event
         const scrollHandler = () => {
             const { scrollY, scrollX } = this.config.remotePeer ? this.iframe!.contentWindow as Window : window
-
             if (!isNaN(scrollX) && !isNaN(scrollY)) {
                 const event: WindowEvent = {
                     type: WINDOW_EVENTS_TYPE.SCROLL,
@@ -203,10 +199,24 @@ export class CoBrowsing {
 
             this.isMouseScroll = false
         }
+        // Selection event
+        const selectionHandler = () => {
+            // let selection = null
+            // if (this.config.remotePeer) {
+            //     selection = this.iframe!.contentWindow!.getSelection()
+            // } else {
+            //     selection = window.getSelection()
+            // }
+
+            // if (selection) {
+            //     selection.anchorNode
+            //     selection.
+            // }
+        }
+
         const wheelScroll = () => {
             this.isMouseScroll = true;
         }
-
 
         window.addEventListener("resize", resizeHandler)
         if (this.config.remotePeer) {
@@ -276,9 +286,9 @@ export class CoBrowsing {
                     const oldValueOfAttribute = event.oldValue
                     const target = event.target
                     const newValueOfAttribute = target.getAttribute(attributeName)
+                    console.log("Attribute change, .... ", { attributeName, oldValueOfAttribute, newValueOfAttribute })
                     if (oldValueOfAttribute !== newValueOfAttribute) {
                         const id = target.__emploriumId
-                        console.log(id)
                         const event: AttributeEvent = {
                             content: { [attributeName]: newValueOfAttribute },
                             id
@@ -388,7 +398,6 @@ export class CoBrowsing {
             const eventString = event.data
             const parsedEvent = JSON.parse(eventString) as HTMLEvent
             // type is the type of event we received to execute, if the type doesn't exist so it should not be executed
-            console.log("recevied event......")
             if (this.building && parsedEvent.type === EVENTS_TYPE.DOM) { return void 0 }
             this.receivingScrollEvent = false
 
@@ -486,10 +495,15 @@ export class CoBrowsing {
 
                     case EVENTS_TYPE.MOUSE: {
                         console.log("Mouse event to execute....")
-                        const recursiveHandlerCall = (node: HTMLElement, handler: (node: HTMLElement) => Function, stopPropagation?: false) => {
+                        const recursiveHandlerCall = (node: HTMLElement, handler: (node: HTMLElement) => ((event: MouseEvent) => any)) => {
+                            debugger
                             const func = handler(node)
+                            let stopped = false;
+                            const stopPropagation = () => { stopped = true };
                             if (func && typeof func === "function") {
+                                //@ts-ignore
                                 func({
+                                    //@ts-ignore
                                     clientX,
                                     clientY,
                                     ctrlKey,
@@ -503,11 +517,15 @@ export class CoBrowsing {
                                     screenX,
                                     screenY,
                                     x,
-                                    y
+                                    y,
+                                    target: node,
+                                    stopPropagation
                                 })
                             }
-                            const parent = node!.offsetParent as HTMLElement
-                            if (parent) recursiveHandlerCall(parent, handler)
+                            if (!stopped) {
+                                const parent = node!.offsetParent
+                                if (parent) recursiveHandlerCall(parent as HTMLElement, handler)
+                            }
                         }
                         const eventContent = parsedEvent.data as MouseEvent
                         const {
@@ -546,19 +564,26 @@ export class CoBrowsing {
                             }
 
                             case MOUSE_EVENTS_TYPE.MOUSE_OVER: {
-
+                                //@ts-ignore
+                                recursiveHandlerCall(node as HTMLElement, (node) => node.onmouseover)
                                 break
                             }
 
                             case MOUSE_EVENTS_TYPE.MOUSE_ENTER: {
+                                //@ts-ignore
+                                recursiveHandlerCall(node as HTMLElement, (node) => node.onmouseenter)
                                 break
                             }
 
                             case MOUSE_EVENTS_TYPE.MOUSE_MOVE: {
+                                //@ts-ignore
+                                recursiveHandlerCall(node as HTMLElement, (node) => node.onmousemove)
                                 break
                             }
 
                             case MOUSE_EVENTS_TYPE.MOUSE_OUT: {
+                                //@ts-ignore
+                                recursiveHandlerCall(node as HTMLElement, (node) => node.onmouseout)
                                 break
                             }
 
@@ -579,6 +604,8 @@ export class CoBrowsing {
                     }
 
                     case EVENTS_TYPE.DOM: {
+                        // The remote peer cann't change the dom
+                        if (!this.config.remotePeer) { return void 0 }
                         const eventContent = parsedEvent.data as DOMEvent
                         const removeIDs = (child: HTMLElement) => {
                             //@ts-ignore
@@ -591,15 +618,12 @@ export class CoBrowsing {
                             case DOM_EVENTS_TYPE.ATTRIBUTE_CHANGE: {
                                 const content = eventContent.content as AttributeEvent
                                 const node = this.map.get(content.id)
-                                console.log("DOM event Attribute", eventContent.content, node)
                                 //@ts-ignore
                                 Object.keys(content.content).forEach(key => node?.setAttribute(key, content.content[key]))
                                 break
                             }
 
                             case DOM_EVENTS_TYPE.DOM_CHANGE: {
-                                console.log("DOM Change ..........")
-                                debugger
                                 const virtualDocument = this.config.remotePeer ? this.iframe!.contentDocument! : document
                                 const content = eventContent.content as DOMEventChange
                                 const node = this.map.get(content.id)
@@ -641,9 +665,6 @@ export class CoBrowsing {
                                 this.setup()
                                 // Start building the DOM
                                 this.buildDOM(DOM)
-                                console.log(this._id)
-                                // Listen to the changement in the DOM (created by css)
-                                this.startMutationObserver()
                                 // Listen to some events on The window  
                                 this.listenToWindowEvents()
                                 // Listen to the mouse postion over the body component
@@ -780,15 +801,19 @@ export class CoBrowsing {
                     }
                     return ({ [attribute.name]: value })
                 }).reduce((acc, v) => ({ ...acc, ...v }), {})
-
+                //@ts-ignore
+                const listenEvents = this.eventsHandled.filter(event => element[event] !== null)
+                if (element.id === "test") {
+                    console.clear()
+                    console.log("The element is here: ", listenEvents, attributes)
+                }
                 const child = {
                     id,
                     tag: element.tagName.toLocaleLowerCase(),
                     type: document.ELEMENT_NODE,
                     children,
                     attributes,
-                    //@ts-ignore
-                    listenEvents: this.eventsHandled.filter(event => element[event] !== null)
+                    listenEvents
                 }
                 return child
             }
@@ -803,14 +828,14 @@ export class CoBrowsing {
                 //@ts-ignore
                 element.__emploriumId = id;
                 this.map.set(id, element)
+                //@ts-ignore
+                const listenEvents = this.eventsHandled.filter(event => element[event] !== null)
                 const child = {
                     id,
                     type: document.TEXT_NODE,
                     content: element.textContent as string,
-                    //@ts-ignore
-                    listenEvents: this.eventsHandled.filter(event => element[event] !== null)
+                    listenEvents
                 }
-
                 return child
             }
 
@@ -818,20 +843,19 @@ export class CoBrowsing {
                 element = element as Document
                 //@ts-ignore
                 const id = notGiveNewId ? element.__emploriumId : ++this._id;
-                console.log(id, "DOc")
                 //@ts-ignore
                 element.__emploriumId = id;
                 this.map.set(id, element)
+                //@ts-ignore
+                const listenEvents = this.eventsHandled.filter(event => element[event] !== null)
                 const child = {
                     id,
                     type: document.DOCUMENT_NODE,
                     children: [element.head, element.body].map(element => this.serializeDOMElement(element)).filter(serialize => serialize !== void 0) as HTMLElementSerialization[],
-                    //@ts-ignore
-                    listenEvents: this.eventsHandled.filter(event => element[event] !== null)
+                    listenEvents
                 }
                 return child
             }
-
         }
 
         return void 0;
@@ -872,7 +896,11 @@ export class CoBrowsing {
                     Object.keys(attributes).map(key => node?.setAttribute(key, attributes[key]))
                     children.map(child => node.appendChild(child as HTMLElement))
                     this.map.set(element.id, node)
-                    forwardEvents.forEach(event => this.addEventListener(node, event))
+                    eventsListen.forEach(event => this.addEventListener(node, event))
+                    //@ts-ignore
+                    if (node.id === "test") {
+                        console.log("test has ", eventsListen)
+                    }
                     return node
                 }
 
@@ -884,7 +912,7 @@ export class CoBrowsing {
                     textNode.__emploriumId = element.id;
                     ///@ts-ignore
                     this.map.set(textNode.__emploriumId, textNode)
-                    forwardEvents.forEach(event => this.addEventListener(textNode, event))
+                    eventsListen.forEach(event => this.addEventListener(textNode, event))
                     return textNode
                 }
             }
