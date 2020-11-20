@@ -9,7 +9,7 @@ export enum WINDOW_EVENTS_TYPE {
   RESIZE = 0,
   SCROLL,
   LOADED,
-
+  CHANGE_URL
 }
 export enum DOM_EVENTS_TYPE {
   DOM_CHANGE = 0,
@@ -51,7 +51,7 @@ export interface Resize {
 // Window Event
 export interface WindowEvent {
   type: WINDOW_EVENTS_TYPE
-  content: Resize | Scroll
+  content: Resize | Scroll | string
 }
 
 
