@@ -53,7 +53,7 @@ export class CoBrowsing {
     private config: Partial<CoBrowsingInterface> = {}
     private socket: WebSocket
     private lastEventOccurred: LastEventOccurred = { content: null, allowedToSend: true, throwFunc: true }
-    private restrictionTime: number = 50 // 50ms
+    private restrictionTime: number = 30 // 30ms
     private receivingScrollEvent: boolean = false
     private isMouseScroll: boolean = false
     private building: boolean = false
@@ -68,15 +68,22 @@ export class CoBrowsing {
         this.root = props.root
         this.config = props
         this.socket = props.socket
+        console.log("%c THERE!!!!!!!!! I AM HERE", "background: red")
         this.socket.onmessage = this.executeEvent
     }
 
     setConfig = (config: Partial<CoBrowsingInterface>) => {
-        console.log("config......")
-        debugger
-        this.config.sameScreenSize = true
         Object.assign(this.config, config)
-        console.log("config......")
+        if (this.root !== this.config.root && this.config.root) {
+            this.root = this.config.root
+        }
+        if (this.socket !== this.config.socket && this.config.socket) {
+            this.socket = this.config.socket
+            this.socket.onmessage = this.executeEvent
+        }
+        if (this.session.started) {
+            this.scaleWrapper()
+        }
     }
 
     getConfig = () => { return this.config }
@@ -107,6 +114,8 @@ export class CoBrowsing {
             data: domEvent,
             type: EVENTS_TYPE.DOM,
         }
+        this.session.started = true
+        this.session.ended = false
         // Send the content through the socket
         this.sendEvent(eventSend)
         // Listen to window event
@@ -115,7 +124,11 @@ export class CoBrowsing {
         this.listenToMousePosition()
         // Listen  to the DOM changement
         this.startMutationObserver()
-        // 
+        //        
+        this.makeVirtualMouse()
+    }
+
+    private makeVirtualMouse = () => {
         // Make virtual cursor 
         const mouseCursor = document.createElement("img")
         this.mouse = document.createElement("div")
@@ -130,7 +143,12 @@ export class CoBrowsing {
         this.mouse.style.zIndex = "1000000"
         this.mouse.classList.add("__emplorium_blocked")
         this.mouse.append(mouseCursor)
-        document.body.append(this.mouse)
+
+        if (this.config.remotePeer) {
+            this.wrapper!.append(this.mouse)
+        } else {
+            document.body.append(this.mouse)
+        }
     }
 
     private scaleWrapper = () => {
@@ -140,15 +158,16 @@ export class CoBrowsing {
         // Get container dimension
         const { width: wrapperWidth, height: wrapperHeight } = this.wholeWrapper!.getBoundingClientRect()
         // Make the scale
-        debugger
         const xScale = isNaN(+width) ? 1 : wrapperWidth >= +width && this.config.sameScreenSize ? 1 : wrapperWidth / +width
         const yScale = isNaN(+height) ? 1 : wrapperHeight >= +height && this.config.sameScreenSize ? 1 : wrapperHeight / +height
         const newWrapperHeight = yScale >= 1 ? 1 : 1 + (1 - yScale)
         const newWrapperWidth = xScale >= 1 ? 1 : 1 + (1 - xScale)
+        const margin = (yScale >= 1 && !this.config.sameScreenSize ? 0 : "auto") + " " + (xScale >= 1 && !this.config.sameScreenSize ? 0 : "auto")
         // Set the Scale
         this.wrapper!.style.transform = `scaleX(${xScale}) scaleY(${yScale})`
         this.wrapper!.style.height = `${newWrapperHeight * 100}%`
         this.wrapper!.style.width = `${newWrapperWidth * 100}%`
+        this.iframeWrapper!.style.margin = margin
     }
 
     /**
@@ -382,23 +401,23 @@ export class CoBrowsing {
 
     private sendEvent = (event: HTMLEvent) => {
         // If the event to send is not allowed to be send, we save it to send it later
-        if (event.type !== EVENTS_TYPE.DOM && !this.lastEventOccurred.allowedToSend) {
-            // If the event we want to send is the same type, we don't allow till the time restriction is out 
-            if (this.lastEventOccurred.content!.type === event.type && this.lastEventOccurred.content!.data.type === event.data.type) {
-                this.lastEventOccurred.content = event;
-                if (this.lastEventOccurred.throwFunc) {
-                    setTimeout(() => {
-                        this.sendEvent(this.lastEventOccurred!.content!)
-                        this.lastEventOccurred.content = null;
-                        this.lastEventOccurred.throwFunc = true;
-                        this.lastEventOccurred.allowedToSend = true;
-                    }, this.restrictionTime)
-                    this.lastEventOccurred!.throwFunc = false;
-                }
+        // if (event.type !== EVENTS_TYPE.DOM && !this.lastEventOccurred.allowedToSend) {
+        //     // If the event we want to send is the same type, we don't allow till the time restriction is out 
+        //     if (this.lastEventOccurred.content!.type === event.type && this.lastEventOccurred.content!.data.type === event.data.type) {
+        //         this.lastEventOccurred.content = event;
+        //         if (this.lastEventOccurred.throwFunc) {
+        //             setTimeout(() => {
+        //                 this.sendEvent(this.lastEventOccurred!.content!)
+        //                 this.lastEventOccurred.content = null;
+        //                 this.lastEventOccurred.throwFunc = true;
+        //                 this.lastEventOccurred.allowedToSend = true;
+        //             }, this.restrictionTime)
+        //             this.lastEventOccurred!.throwFunc = false;
+        //         }
 
-                return void 0
-            }
-        }
+        //         return void 0
+        //     }
+        // }
         this.lastEventOccurred.content = event;
         this.lastEventOccurred.allowedToSend = false;
         this.socket.send(JSON.stringify(event))
@@ -409,8 +428,8 @@ export class CoBrowsing {
         try {
             const eventString = event.data
             const parsedEvent = JSON.parse(eventString) as HTMLEvent
-            // type is the type of event we received to execute, if the type doesn't exist so it should not be executed
             if (this.building && parsedEvent.type === EVENTS_TYPE.DOM) { return void 0 }
+            if ((!this.session.started || this.session.ended) && parsedEvent.type !== EVENTS_TYPE.DOM) { return void 0 }
             this.receivingScrollEvent = false
 
             try {
@@ -677,11 +696,11 @@ export class CoBrowsing {
                                 this.setup()
                                 // Start building the DOM
                                 this.buildDOM(DOM)
+                                this.building = false
                                 // Listen to some events on The window  
                                 this.listenToWindowEvents()
                                 // Listen to the mouse postion over the body component
                                 this.listenToMousePosition()
-                                this.building = false
                                 break;
                             }
                         }
@@ -747,24 +766,13 @@ export class CoBrowsing {
         // Remove the previous container
         if (this.wholeWrapper) this.wholeWrapper.remove()
         // Create elements
-        const mouseCursor = document.createElement("img")
         this.iframe = document.createElement("iframe")
         this.iframeWrapper = document.createElement("div")
-        this.mouse = document.createElement("div")
         this.wrapper = document.createElement("div")
         this.wholeWrapper = document.createElement("div")
         // Add some properties
-        mouseCursor.src = "https://tl.vhv.rs/dpng/s/407-4077994_mouse-pointer-png-png-download-mac-mouse-pointer.png"
-        this.mouse.classList.add("__emplorium_blocked")
-        mouseCursor.style.width = "100%"
-        mouseCursor.style.height = "100%"
-        this.mouse.style.position = "absolute"
-        this.mouse.style.left = "0px"
-        this.mouse.style.top = "0px"
-        this.mouse.style.width = "20px"
-        this.mouse.style.height = "20px"
-        this.mouse.style.zIndex = "1000000"
         this.iframe.classList.add("__emplorium-iframe")
+        this.iframeWrapper.classList.add("__emplorium-iframe-wrapper")
         this.wrapper.classList.add("__emplorium-wrapper")
         this.wholeWrapper.classList.add("__emplorium-whole-wrapper")
         this.iframe.style.width = "100%";
@@ -785,13 +793,13 @@ export class CoBrowsing {
         this.wholeWrapper.style.minWidth = "100%";
         this.wholeWrapper.style.minHeight = "100%";
         // Append them by each other
-        this.mouse.append(mouseCursor)
         this.iframeWrapper.append(this.iframe)
         this.wrapper.append(this.iframeWrapper)
-        this.wrapper.append(this.mouse)
         this.wholeWrapper.append(this.wrapper)
-        console.log(this.wholeWrapper, this.root)
         this.root.append(this.wholeWrapper)
+
+        this.makeVirtualMouse()
+
 
         //Stop making event
         this.stopDoing = this.iframe.contentDocument!.createElement("div")
